@@ -2,6 +2,10 @@ from fastapi import FastAPI
 from routers import tryon
 from fastapi.middleware.cors import CORSMiddleware
 
+@app.get("/")
+def root():
+    return {"message": "Backend up and running!"}
+
 app = FastAPI()
 
 # Allow frontend to connect
