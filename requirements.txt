@@ -43,4 +43,4 @@ uritemplate==4.2.0
 urllib3==2.5.0
 uvicorn==0.37.0
 websockets==15.0.1
-gunicorn==22.2.0
+gunicorn==22.0.0
