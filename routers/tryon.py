@@ -1,10 +1,26 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 from typing import List
-import base64, traceback
+from google import genai
+from google.genai import types
+from utils.base64_helpers import array_buffer_to_base64
+from dotenv import load_dotenv
+import os
+import base64
+import traceback
 
-# Definir router
+load_dotenv()
+
+# ---- Configuración Gemini ----
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("Missing GEMINI_API_KEY in .env")
+
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+# ---- Router ----
 router = APIRouter()
+
 
 @router.post("/try-on")
 async def try_on(
@@ -30,7 +46,7 @@ async def try_on(
 
         # ---- Validar imagen del usuario ----
         user_bytes = await person_image.read()
-        if len(user_bytes)/(1024*1024) > MAX_IMAGE_SIZE_MB:
+        if len(user_bytes) / (1024 * 1024) > MAX_IMAGE_SIZE_MB:
             raise HTTPException(status_code=400, detail="person_image exceeds 10MB")
         if person_image.content_type not in ALLOWED_MIME_TYPES:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {person_image.content_type}")
@@ -41,15 +57,16 @@ async def try_on(
             if img.content_type not in ALLOWED_MIME_TYPES:
                 raise HTTPException(status_code=400, detail=f"Unsupported file type: {img.content_type}")
             bytes_img = await img.read()
-            if len(bytes_img)/(1024*1024) > MAX_IMAGE_SIZE_MB:
+            if len(bytes_img) / (1024 * 1024) > MAX_IMAGE_SIZE_MB:
                 raise HTTPException(status_code=400, detail="cloth_image exceeds 10MB")
             cloth_bytes_list.append(bytes_img)
 
         # ---- Construir prompt dinámico estrictamente ----
-        # Cada prenda con su tipo para aplicarla correctamente
-        garments_info = "\n".join([f"- {cat}: apply realistically, preserve size, shape and color" for cat in categories])
+        garments_info = "\n".join([
+            f"- {cat}: apply realistically, preserve size, shape and color"
+            for cat in categories
+        ])
         
-        # Prompt enfocado en cuerpo completo y rostro
         prompt = f"""
         Generate a photorealistic full-body try-on image for the user.
         STRICTLY PRESERVE:
@@ -66,11 +83,14 @@ async def try_on(
         - Garment Type: {garment_type}
         - Style: {style}
         """
-        
+
         # ---- Preparar inputs para Gemini ----
-        contents = [prompt, types.Part.from_bytes(data=user_bytes, mime_type=person_image.content_type)]
+        contents = [types.Part.from_bytes(data=user_bytes, mime_type=person_image.content_type)]
         for b in cloth_bytes_list:
             contents.append(types.Part.from_bytes(data=b, mime_type="image/png"))
+
+        # Añadir prompt como texto
+        contents.insert(0, prompt)
 
         # ---- Generar contenido ----
         response = client.models.generate_content(
