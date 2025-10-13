@@ -1,107 +1,98 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
-from dotenv import load_dotenv
-import os, traceback, base64
-from google import genai
-from google.genai import types
+import base64, traceback
+from openai import types, Client
 
-load_dotenv()
 router = APIRouter()
+client = Client()
 
-# Inicializa el cliente Gemini
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    raise ValueError("❌ Missing GEMINI_API_KEY in .env")
-
-client = genai.Client(api_key=GEMINI_API_KEY)
-
-# --- ENDPOINT PRINCIPAL ---
 @router.post("/try-on")
 async def try_on(
     person_image: UploadFile = File(...),
-    cloth_image: UploadFile = File(...),
+    cloth_images: list[UploadFile] = File(...),  # 🔹 ahora soporta múltiples prendas
     instructions: str = Form(""),
-    model_type: str = Form(""),
-    gender: str = Form(""),
-    garment_type: str = Form(""),
-    style: str = Form(""),
+    model_type: str = Form("realistic"),
+    gender: str = Form("female"),
+    style: str = Form("modern"),
 ):
     try:
         MAX_IMAGE_SIZE_MB = 10
-        ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+        ALLOWED_MIME_TYPES = {
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/heic",
+            "image/heif",
+        }
 
-        # --- Validación de archivos ---
+        # ---- Validar person_image ----
         if person_image.content_type not in ALLOWED_MIME_TYPES:
-            raise HTTPException(status_code=400, detail=f"Invalid person_image type: {person_image.content_type}")
-        if cloth_image.content_type not in ALLOWED_MIME_TYPES:
-            raise HTTPException(status_code=400, detail=f"Invalid cloth_image type: {cloth_image.content_type}")
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {person_image.content_type}")
+        user_bytes = await person_image.read()
+        if len(user_bytes) / (1024*1024) > MAX_IMAGE_SIZE_MB:
+            raise HTTPException(status_code=400, detail="person_image exceeds 10MB")
 
-        person_bytes = await person_image.read()
-        cloth_bytes = await cloth_image.read()
+        # ---- Validar cloth_images ----
+        cloth_bytes_list = []
+        for cloth in cloth_images:
+            if cloth.content_type not in ALLOWED_MIME_TYPES:
+                raise HTTPException(status_code=400, detail=f"Unsupported file type: {cloth.content_type}")
+            b = await cloth.read()
+            if len(b) / (1024*1024) > MAX_IMAGE_SIZE_MB:
+                raise HTTPException(status_code=400, detail=f"{cloth.filename} exceeds 10MB")
+            cloth_bytes_list.append({"name": cloth.filename, "data": b, "mime": cloth.content_type})
 
-        if len(person_bytes) > MAX_IMAGE_SIZE_MB * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="person_image too large")
-        if len(cloth_bytes) > MAX_IMAGE_SIZE_MB * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="cloth_image too large")
-
-        # --- PROMPT reforzado ---
+        # ---- Prompt extenso ----
+        cloth_descriptions = ", ".join([c["name"] for c in cloth_bytes_list])
         prompt = f"""
-You are a professional virtual fashion stylist and photo retoucher.
-Create a **realistic full-body virtual try-on** of the clothing on the person image.
+        {{
+            "objective": "Generate a photorealistic virtual try-on image, integrating the selected clothing items ({cloth_descriptions}) onto a person, rigidly preserving the facial identity, proportions, and natural posture.",
+            "task": "High-Fidelity Virtual Try-On with Identity/Garment Preservation and Full-Body Output",
+            "inputs": {{
+                "person_image": {{"description": "Source image containing the target person.", "id": "input_1"}},
+                "garment_images": [
+                    {', '.join([f'{{"description": "Clothing item: {c["name"]}", "id": "input_{i+2}"}}' for i,c in enumerate(cloth_bytes_list)])}
+                ]
+            }},
+            "focus_instructions": "Apply smart zoom for each garment type (blouse, shoes, pants, etc.) to highlight it, but do not deform the face or body. Keep realistic proportions.",
+            "style_instructions": "{style}",
+            "special_instructions": "{instructions}"
+        }}
+        """
 
-Context:
-- Model Type: {model_type}
-- Gender: {gender}
-- Garment Type: {garment_type}
-- Style: {style}
-- Instructions: {instructions}
+        # ---- Preparar inputs para Gemini ----
+        contents = [prompt, types.Part.from_bytes(data=user_bytes, mime_type=person_image.content_type)]
+        for c in cloth_bytes_list:
+            contents.append(types.Part.from_bytes(data=c["data"], mime_type=c["mime"]))
 
-Rules:
-1. **Do not touch the face**. Keep the face 100% identical, no deformation, lighting, or expression changes.
-2. Replace only the selected clothing areas. Preserve pose, proportions, and body geometry.
-3. Maintain consistent skin tone, lighting, and shadows.
-4. Ensure photorealistic blending and subtle background.
-5. Output a single image, no text, no additional modifications.
-"""
-
-        contents = [
-            types.Part.from_text(prompt),
-            types.Part.from_bytes(person_bytes, mime_type=person_image.content_type),
-            types.Part.from_bytes(cloth_bytes, mime_type=cloth_image.content_type),
-        ]
-
-        # --- GENERAR contenido ---
+        # ---- Generar imagen ----
         response = client.models.generate_content(
             model="gemini-2.0-flash-exp-image-generation",
             contents=contents,
-            config=types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
+            config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
         )
 
-        # --- PROCESAR RESPUESTA ---
+        # ---- Procesar respuesta ----
         image_data = None
-        text_response = "No description."
-
+        text_response = "No description available."
         if response.candidates:
-            candidate = response.candidates[0]
-            for part in candidate.content.parts:
+            parts = response.candidates[0].content.parts
+            for part in parts:
                 if hasattr(part, "inline_data") and part.inline_data:
                     image_data = part.inline_data.data
-                    mime = getattr(part.inline_data, "mime_type", "image/png")
+                    image_mime_type = getattr(part.inline_data, "mime_type", "image/png")
                 elif hasattr(part, "text") and part.text:
-                    text_response = part.text.strip()
+                    text_response = part.text
 
-        if not image_data:
-            raise HTTPException(status_code=500, detail="No image generated by Gemini.")
+        if image_data:
+            image_base64 = base64.b64encode(image_data).decode("utf-8")
+            image_url = f"data:{image_mime_type};base64,{image_base64}"
+        else:
+            image_url = None
 
-        image_base64 = base64.b64encode(image_data).decode("utf-8")
-        image_url = f"data:image/png;base64,{image_base64}"
-
-        return JSONResponse(content={
-            "image": image_url,
-            "text": text_response
-        })
+        return JSONResponse(content={"image": image_url, "text": text_response})
 
     except Exception as e:
-        print("❌ Error in /api/try-on:", e)
+        print("❌ Error in /api/try-on endpoint:", e)
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
