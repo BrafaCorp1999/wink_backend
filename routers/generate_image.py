@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from typing import List
 from google import genai
 from google.genai import types
+from googletrans import Translator
 import base64, traceback, os
 from dotenv import load_dotenv
 
@@ -15,6 +16,25 @@ if not GEMINI_API_KEY:
     raise ValueError("Missing GEMINI_API_KEY in .env")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
+translator = Translator()
+
+
+def traducir_y_resumir(texto_en: str) -> str:
+    """Traduce al español y resume el texto a 1–2 líneas."""
+    try:
+        if not texto_en:
+            return "✨ Look moderno y cómodo, ideal para destacar con estilo."
+
+        # Traducir al español
+        texto_es = translator.translate(texto_en, src="en", dest="es").text.strip()
+
+        # Resumir (máx. 2 líneas o ~180 caracteres)
+        if len(texto_es) > 180:
+            texto_es = texto_es[:180].rsplit('.', 1)[0] + "..."
+        return texto_es
+    except Exception as e:
+        print("⚠️ Error traduciendo texto:", e)
+        return "✨ Look moderno y cómodo, ideal para destacar con estilo."
 
 
 @router.post("/generate-image")
@@ -27,49 +47,46 @@ async def generate_image(
 ):
     """
     Genera un outfit completo sobre la imagen del usuario usando un prompt personalizado.
-    Retorna imagen + texto resumido (2-3 líneas) describiendo el outfit sugerido.
+    Retorna imagen + descripción corta en español.
     """
     try:
         MAX_IMAGE_SIZE_MB = 10
         ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
-        # ---- Validar imagen del usuario ----
+        # --- Validar imagen ---
         user_bytes = await person_image.read()
-        if len(user_bytes) / (1024*1024) > MAX_IMAGE_SIZE_MB:
+        if len(user_bytes) / (1024 * 1024) > MAX_IMAGE_SIZE_MB:
             raise HTTPException(status_code=400, detail="person_image exceeds 10MB")
         if person_image.content_type not in ALLOWED_MIME_TYPES:
-            raise HTTPException(status_code=400, detail=f"Unsupported file type: {person_image.content_type}")
+            raise HTTPException(
+                status_code=400, detail=f"Unsupported file type: {person_image.content_type}"
+            )
 
-        # ---- Construir prompt completo estrictamente ----
+        # --- Prompt completo para Gemini ---
         full_prompt = f"""
         Generate a photorealistic full-body outfit for the user in the image.
         STRICTLY PRESERVE:
-        - User's face, hair, neck and facial identity
-        - Full body proportions
-        - Natural appearance
+        - User's face, hair, and natural body shape.
         Instructions: {prompt}
         Context:
         - Model Type: {model_type}
         - Gender: {gender}
         - Style: {style}
-        Apply modern clothing items (tops, bottoms, shoes, accessories) according to the instructions.
-        Include a short description of the outfit in 2-3 lines.
+        Include a short 2–3 sentence English description of the outfit.
         """
 
-        # ---- Preparar contenido para Gemini ----
         contents = [
             full_prompt,
-            types.Part.from_bytes(data=user_bytes, mime_type=person_image.content_type)
+            types.Part.from_bytes(data=user_bytes, mime_type=person_image.content_type),
         ]
 
-        # ---- Generar imagen + texto con Gemini ----
         response = client.models.generate_content(
             model="gemini-2.0-flash-exp-image-generation",
             contents=contents,
-            config=types.GenerateContentConfig(response_modalities=['TEXT','IMAGE'])
+            config=types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
         )
 
-        # ---- Procesar respuesta ----
+        # --- Procesar respuesta ---
         image_data = None
         text_response = "No description available."
         if response.candidates:
@@ -81,15 +98,19 @@ async def generate_image(
                 elif hasattr(part, "text") and part.text:
                     text_response = part.text.strip()
 
+        # --- Codificar imagen ---
         if image_data:
             image_base64 = base64.b64encode(image_data).decode("utf-8")
             image_url = f"data:{image_mime_type};base64,{image_base64}"
         else:
             image_url = None
 
-        return JSONResponse(content={"image": image_url, "text": text_response})
+        # --- Traducir y resumir descripción ---
+        text_es = traducir_y_resumir(text_response)
+
+        return JSONResponse(content={"image": image_url, "text": text_es})
 
     except Exception as e:
-        print("❌ Error in /api/generate-image endpoint:", e)
+        print("❌ Error en /generate-image:", e)
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
