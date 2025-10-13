@@ -1,78 +1,58 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from fastapi.responses import JSONResponse
-import base64, traceback
-from openai import types, Client
-
-router = APIRouter()
-client = Client()
-
 @router.post("/try-on")
 async def try_on(
     person_image: UploadFile = File(...),
-    cloth_images: list[UploadFile] = File(...),  # 🔹 ahora soporta múltiples prendas
+    cloth_images: List[UploadFile] = File(...),
+    categories: List[str] = Form(...),  # etiquetas de cada prenda
     instructions: str = Form(""),
-    model_type: str = Form("realistic"),
-    gender: str = Form("female"),
-    style: str = Form("modern"),
+    model_type: str = Form(""),
+    gender: str = Form(""),
+    garment_type: str = Form(""),
+    style: str = Form(""),
 ):
     try:
+        # Validación y lectura de imágenes igual que antes
         MAX_IMAGE_SIZE_MB = 10
-        ALLOWED_MIME_TYPES = {
-            "image/jpeg",
-            "image/png",
-            "image/webp",
-            "image/heic",
-            "image/heif",
-        }
+        ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
-        # ---- Validar person_image ----
-        if person_image.content_type not in ALLOWED_MIME_TYPES:
-            raise HTTPException(status_code=400, detail=f"Unsupported file type: {person_image.content_type}")
         user_bytes = await person_image.read()
         if len(user_bytes) / (1024*1024) > MAX_IMAGE_SIZE_MB:
             raise HTTPException(status_code=400, detail="person_image exceeds 10MB")
 
-        # ---- Validar cloth_images ----
         cloth_bytes_list = []
-        for cloth in cloth_images:
-            if cloth.content_type not in ALLOWED_MIME_TYPES:
-                raise HTTPException(status_code=400, detail=f"Unsupported file type: {cloth.content_type}")
-            b = await cloth.read()
-            if len(b) / (1024*1024) > MAX_IMAGE_SIZE_MB:
-                raise HTTPException(status_code=400, detail=f"{cloth.filename} exceeds 10MB")
-            cloth_bytes_list.append({"name": cloth.filename, "data": b, "mime": cloth.content_type})
+        for img in cloth_images:
+            if img.content_type not in ALLOWED_MIME_TYPES:
+                raise HTTPException(status_code=400, detail=f"Unsupported file type: {img.content_type}")
+            bytes_img = await img.read()
+            if len(bytes_img) / (1024*1024) > MAX_IMAGE_SIZE_MB:
+                raise HTTPException(status_code=400, detail="cloth_image exceeds 10MB")
+            cloth_bytes_list.append(bytes_img)
 
-        # ---- Prompt extenso ----
-        cloth_descriptions = ", ".join([c["name"] for c in cloth_bytes_list])
+        # Construir prompt dinámico según las prendas
+        garments_info = "\n".join([f"- {cat}: apply realistically" for cat in categories])
         prompt = f"""
-        {{
-            "objective": "Generate a photorealistic virtual try-on image, integrating the selected clothing items ({cloth_descriptions}) onto a person, rigidly preserving the facial identity, proportions, and natural posture.",
-            "task": "High-Fidelity Virtual Try-On with Identity/Garment Preservation and Full-Body Output",
-            "inputs": {{
-                "person_image": {{"description": "Source image containing the target person.", "id": "input_1"}},
-                "garment_images": [
-                    {', '.join([f'{{"description": "Clothing item: {c["name"]}", "id": "input_{i+2}"}}' for i,c in enumerate(cloth_bytes_list)])}
-                ]
-            }},
-            "focus_instructions": "Apply smart zoom for each garment type (blouse, shoes, pants, etc.) to highlight it, but do not deform the face or body. Keep realistic proportions.",
-            "style_instructions": "{style}",
-            "special_instructions": "{instructions}"
-        }}
+        Generate a photorealistic full-body try-on image for the user.
+        Strictly preserve the user's face and proportions.
+        Apply all selected garments realistically:
+        {garments_info}
+        Maintain correct proportions, preserve facial identity, do not crop the person.
+        Instructions: {instructions}
+        Model Type: {model_type}
+        Gender: {gender}
+        Style: {style}
         """
 
-        # ---- Preparar inputs para Gemini ----
+        # Preparar inputs para Gemini (puedes usar tu código actual)
         contents = [prompt, types.Part.from_bytes(data=user_bytes, mime_type=person_image.content_type)]
-        for c in cloth_bytes_list:
-            contents.append(types.Part.from_bytes(data=c["data"], mime_type=c["mime"]))
+        for b in cloth_bytes_list:
+            contents.append(types.Part.from_bytes(data=b, mime_type="image/png"))
 
-        # ---- Generar imagen ----
         response = client.models.generate_content(
             model="gemini-2.0-flash-exp-image-generation",
             contents=contents,
             config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
         )
 
-        # ---- Procesar respuesta ----
+        # Procesar respuesta igual que antes
         image_data = None
         text_response = "No description available."
         if response.candidates:
