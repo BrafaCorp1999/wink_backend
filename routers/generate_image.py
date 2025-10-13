@@ -1,9 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
-from typing import List
 from google import genai
 from google.genai import types
-from googletrans import Translator
 import base64, traceback, os
 from dotenv import load_dotenv
 
@@ -16,25 +14,6 @@ if not GEMINI_API_KEY:
     raise ValueError("Missing GEMINI_API_KEY in .env")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
-translator = Translator()
-
-
-def traducir_y_resumir(texto_en: str) -> str:
-    """Traduce al español y resume el texto a 1–2 líneas."""
-    try:
-        if not texto_en:
-            return "✨ Look moderno y cómodo, ideal para destacar con estilo."
-
-        # Traducir al español
-        texto_es = translator.translate(texto_en, src="en", dest="es").text.strip()
-
-        # Resumir (máx. 2 líneas o ~180 caracteres)
-        if len(texto_es) > 180:
-            texto_es = texto_es[:180].rsplit('.', 1)[0] + "..."
-        return texto_es
-    except Exception as e:
-        print("⚠️ Error traduciendo texto:", e)
-        return "✨ Look moderno y cómodo, ideal para destacar con estilo."
 
 
 @router.post("/generate-image")
@@ -62,24 +41,25 @@ async def generate_image(
                 status_code=400, detail=f"Unsupported file type: {person_image.content_type}"
             )
 
-        # --- Prompt completo para Gemini ---
+        # --- Prompt completo para Gemini (ESPAÑOL, 1-2 líneas) ---
         full_prompt = f"""
-        Genera un outfit fotorealista de cuerpo completo para el usuario en la imagen.
-        MANTENER ESTRICTAMENTE: 
-        - Rostro, cabello y forma natural del cuerpo.
-        Instrucciones: {prompt}
-        Contexto:
-        - Tipo de modelo: {model_type}
-        - Género: {gender}
-        - Estilo: {style}
-        Incluye una descripción corta de 1–2 líneas en español del outfit.
-        """
+Genera un outfit fotorealista de cuerpo completo para el usuario en la imagen.
+MANTENER ESTRICTAMENTE:
+- Rostro, cabello y forma natural del cuerpo.
+Instrucciones: {prompt}
+Contexto:
+- Tipo de modelo: {model_type}
+- Género: {gender}
+- Estilo: {style}
+Incluye una descripción corta de 1–2 líneas en español del outfit.
+"""
 
         contents = [
             full_prompt,
             types.Part.from_bytes(data=user_bytes, mime_type=person_image.content_type),
         ]
 
+        # --- Generar imagen + texto con Gemini ---
         response = client.models.generate_content(
             model="gemini-2.0-flash-exp-image-generation",
             contents=contents,
@@ -88,7 +68,7 @@ async def generate_image(
 
         # --- Procesar respuesta ---
         image_data = None
-        text_response = "No description available."
+        text_response = "No hay descripción disponible."
         if response.candidates:
             parts = response.candidates[0].content.parts
             for part in parts:
@@ -105,10 +85,7 @@ async def generate_image(
         else:
             image_url = None
 
-        # --- Traducir y resumir descripción ---
-        text_es = traducir_y_resumir(text_response)
-
-        return JSONResponse(content={"image": image_url, "text": text_es})
+        return JSONResponse(content={"image": image_url, "text": text_response})
 
     except Exception as e:
         print("❌ Error en /generate-image:", e)
