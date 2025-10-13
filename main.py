@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from routers import tryon
 from fastapi.middleware.cors import CORSMiddleware
-from routes import generate_image
+from routers import generate_image
 
 app = FastAPI()
 
