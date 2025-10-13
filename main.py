@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from routers import tryon
 from fastapi.middleware.cors import CORSMiddleware
 from routers import generate_image
+from routers import generate_body_model
 
 app = FastAPI()
 
@@ -16,3 +17,4 @@ app.add_middleware(
 
 app.include_router(tryon.router, prefix="/api")
 app.include_router(generate_image.router, prefix="/api")
+app.include_router(generate_body_model.router, prefix="/api")
