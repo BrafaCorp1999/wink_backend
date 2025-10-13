@@ -64,15 +64,15 @@ async def generate_image(
 
         # --- Prompt completo para Gemini ---
         full_prompt = f"""
-        Generate a photorealistic full-body outfit for the user in the image.
-        STRICTLY PRESERVE:
-        - User's face, hair, and natural body shape.
-        Instructions: {prompt}
-        Context:
-        - Model Type: {model_type}
-        - Gender: {gender}
-        - Style: {style}
-        Include a short 2–3 sentence English description of the outfit.
+        Genera un outfit fotorealista de cuerpo completo para el usuario en la imagen.
+        MANTENER ESTRICTAMENTE: 
+        - Rostro, cabello y forma natural del cuerpo.
+        Instrucciones: {prompt}
+        Contexto:
+        - Tipo de modelo: {model_type}
+        - Género: {gender}
+        - Estilo: {style}
+        Incluye una descripción corta de 1–2 líneas en español del outfit.
         """
 
         contents = [
