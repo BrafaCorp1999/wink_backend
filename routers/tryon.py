@@ -1,3 +1,11 @@
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi.responses import JSONResponse
+from typing import List
+import base64, traceback
+
+# Definir router
+router = APIRouter()
+
 @router.post("/try-on")
 async def try_on(
     person_image: UploadFile = File(...),
@@ -9,50 +17,69 @@ async def try_on(
     garment_type: str = Form(""),
     style: str = Form(""),
 ):
+    """
+    Endpoint para generar un try-on realista de varias prendas sobre una persona.
+    - person_image: imagen del usuario
+    - cloth_images: lista de imágenes de prendas seleccionadas
+    - categories: lista de etiquetas que indica tipo de cada prenda
+    - instructions: instrucciones adicionales opcionales
+    """
     try:
-        # Validación y lectura de imágenes igual que antes
         MAX_IMAGE_SIZE_MB = 10
         ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
+        # ---- Validar imagen del usuario ----
         user_bytes = await person_image.read()
-        if len(user_bytes) / (1024*1024) > MAX_IMAGE_SIZE_MB:
+        if len(user_bytes)/(1024*1024) > MAX_IMAGE_SIZE_MB:
             raise HTTPException(status_code=400, detail="person_image exceeds 10MB")
+        if person_image.content_type not in ALLOWED_MIME_TYPES:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {person_image.content_type}")
 
+        # ---- Validar y leer prendas ----
         cloth_bytes_list = []
         for img in cloth_images:
             if img.content_type not in ALLOWED_MIME_TYPES:
                 raise HTTPException(status_code=400, detail=f"Unsupported file type: {img.content_type}")
             bytes_img = await img.read()
-            if len(bytes_img) / (1024*1024) > MAX_IMAGE_SIZE_MB:
+            if len(bytes_img)/(1024*1024) > MAX_IMAGE_SIZE_MB:
                 raise HTTPException(status_code=400, detail="cloth_image exceeds 10MB")
             cloth_bytes_list.append(bytes_img)
 
-        # Construir prompt dinámico según las prendas
-        garments_info = "\n".join([f"- {cat}: apply realistically" for cat in categories])
+        # ---- Construir prompt dinámico estrictamente ----
+        # Cada prenda con su tipo para aplicarla correctamente
+        garments_info = "\n".join([f"- {cat}: apply realistically, preserve size, shape and color" for cat in categories])
+        
+        # Prompt enfocado en cuerpo completo y rostro
         prompt = f"""
         Generate a photorealistic full-body try-on image for the user.
-        Strictly preserve the user's face and proportions.
+        STRICTLY PRESERVE:
+        - User's face and facial identity
+        - Full body proportions
+        - Correct placement and appearance of garments
+        - No cropping of the user
         Apply all selected garments realistically:
         {garments_info}
-        Maintain correct proportions, preserve facial identity, do not crop the person.
-        Instructions: {instructions}
-        Model Type: {model_type}
-        Gender: {gender}
-        Style: {style}
+        Additional instructions: {instructions}
+        Context:
+        - Model Type: {model_type}
+        - Gender: {gender}
+        - Garment Type: {garment_type}
+        - Style: {style}
         """
-
-        # Preparar inputs para Gemini (puedes usar tu código actual)
+        
+        # ---- Preparar inputs para Gemini ----
         contents = [prompt, types.Part.from_bytes(data=user_bytes, mime_type=person_image.content_type)]
         for b in cloth_bytes_list:
             contents.append(types.Part.from_bytes(data=b, mime_type="image/png"))
 
+        # ---- Generar contenido ----
         response = client.models.generate_content(
             model="gemini-2.0-flash-exp-image-generation",
             contents=contents,
-            config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
+            config=types.GenerateContentConfig(response_modalities=['TEXT','IMAGE'])
         )
 
-        # Procesar respuesta igual que antes
+        # ---- Procesar respuesta ----
         image_data = None
         text_response = "No description available."
         if response.candidates:
