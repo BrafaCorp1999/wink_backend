@@ -29,8 +29,7 @@ async def generate_image(
 ):
     """
     Generate 2 full-body realistic outfit images based on a user's photo,
-    preserving the natural face, hair, skin tone, body proportions,
-    adjusting clothing according to measurements and body_shape.
+    preserving the natural face, hair, skin tone, and body proportions.
     """
 
     try:
@@ -45,7 +44,7 @@ async def generate_image(
             raise HTTPException(status_code=400, detail="Unsupported image type")
 
         # --- Default attributes ---
-        gender_label = "female" if gender.lower().startswith("f") else "male"
+        gender_label = "female" if str(gender).lower().startswith("f") else "male"
         body_shape = body_shape or "average"
         style = style or "casual"
         model_type = model_type or "realistic"
@@ -60,28 +59,32 @@ async def generate_image(
             measurements.append(f"height {height} cm")
         measure_text = ", ".join(measurements) if measurements else "average body proportions"
 
-        # --- Prompt reforzado ---
+        # --- Strong prompt that forces preserving the face/hair/skin and respecting gender ---
         english_prompt = f"""
-Generate a full-body **photorealistic fashion image** of the person in the uploaded photo.
+Generate a full-body photorealistic fashion image of the person in the uploaded photo.
 
 STRICT REQUIREMENTS:
-- Preserve 100% the person’s **face**, **hairstyle**, **hair texture**, **skin tone**, and **body proportions** exactly as in the uploaded photo.
-- Do NOT modify the person's ethnicity, facial structure, expression, or lighting tone of the face.
-- The face and hair must remain **natural, detailed, and identical** to the original image.
-- Change ONLY clothing and outfit style.
-- Keep the background neutral and elegant (studio or minimalist style).
+- Preserve 100% the person's face, hairstyle, hair texture, skin tone, and body proportions exactly as in the uploaded photo.
+- Do NOT modify the person's ethnicity, facial structure, facial expression, or skin tone.
+- Use the face/head region of the uploaded photo as the primary reference for identity — keep it identical.
+- Change ONLY clothing and outfit; clothing must be realistically integrated on the body.
+- Respect the provided gender: {gender_label}. If the provided gender conflicts with the face, follow the provided gender but keep the face features unchanged.
 
-Fashion Task:
-Create 2 similar outfits for a {gender_label} with a {body_shape} body type and {measure_text}.
-The outfits should respect the user's measurements and body proportions, adjusting clothing size accordingly.
-The outfit style should be {style}.
-Follow these additional user instructions: {prompt}.
-- Provide a short fashion description in Spanish (1–2 sentences) for the outfits.
+FASHION TASK:
+Create two similar but distinct full-body outfits for a {gender_label} with a {body_shape} body type and {measure_text}.
+Style: {style}.
+Additional instructions: {prompt}
 
-Make the results suitable for a fashion app — consistent, realistic, elegant, and human-looking.
+REQUIREMENTS:
+- Both images must be high-quality, photorealistic, full-body, consistent lighting and background (studio/minimalist).
+- Do not alter the face or hair. Do not lighten/darken skin or change hair texture.
+- Adjust clothing size and fit according to the measurements and body type provided.
+- Provide a short Spanish 1–2 sentence description for the outfit(s) (preferably for each image).
+
+Return image data (inline) and a text description.
 """
 
-        # --- First image ---
+        # --- First generation (base) ---
         contents1 = [
             english_prompt.strip(),
             types.Part.from_bytes(data=user_bytes, mime_type=person_image.content_type),
@@ -91,27 +94,28 @@ Make the results suitable for a fashion app — consistent, realistic, elegant, 
             contents=contents1,
             config=types.GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"],
-                temperature=0.7
+                temperature=0.7,
             ),
         )
 
-        # --- Parse first image ---
+        # --- Parse first response ---
         images_base64 = []
-        text_response = "No hay descripción disponible."
-
+        text_response = ""
         if response1.candidates:
-            candidate = response1.candidates[0]
-            for part in candidate.content.parts:
+            cand = response1.candidates[0]
+            for part in cand.content.parts:
                 if hasattr(part, "inline_data") and part.inline_data:
                     img_data = part.inline_data.data
                     mime = getattr(part.inline_data, "mime_type", "image/png")
                     images_base64.append(f"data:{mime};base64,{base64.b64encode(img_data).decode()}")
                 elif hasattr(part, "text") and part.text:
+                    # prefer Spanish short description if returned
                     text_response = part.text.strip()
 
-        # --- Second image (small variation) ---
+        # --- Second generation: small variation instruction appended ---
+        variation_prompt = english_prompt.strip() + "\nVariation: produce a second similar outfit with different clothing choices (same constraints)."
         contents2 = [
-            english_prompt.strip() + "\nVariation: slightly different outfit style",
+            variation_prompt,
             types.Part.from_bytes(data=user_bytes, mime_type=person_image.content_type),
         ]
         response2 = client.models.generate_content(
@@ -119,25 +123,31 @@ Make the results suitable for a fashion app — consistent, realistic, elegant, 
             contents=contents2,
             config=types.GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"],
-                temperature=0.7
+                temperature=0.7,
             ),
         )
 
-        # --- Parse second image ---
         if response2.candidates:
-            candidate = response2.candidates[0]
-            for part in candidate.content.parts:
+            cand2 = response2.candidates[0]
+            for part in cand2.content.parts:
                 if hasattr(part, "inline_data") and part.inline_data:
                     img_data = part.inline_data.data
                     mime = getattr(part.inline_data, "mime_type", "image/png")
                     images_base64.append(f"data:{mime};base64,{base64.b64encode(img_data).decode()}")
+                elif hasattr(part, "text") and part.text:
+                    # if there is extra text, append or keep
+                    if not text_response:
+                        text_response = part.text.strip()
 
         if not images_base64:
             raise HTTPException(status_code=500, detail="Image generation failed")
 
+        # If the model returned text in English, you could translate here (optional).
+        # We prefer the model to return Spanish description; if not, we keep returned text.
+
         return JSONResponse(content={
             "images": images_base64,
-            "text": text_response,  # descripción de la primera imagen
+            "text": text_response,
             "context_used": {
                 "gender": gender_label,
                 "body_shape": body_shape,
