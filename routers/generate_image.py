@@ -28,8 +28,9 @@ async def generate_image(
     height: float = Form(None),
 ):
     """
-    Generate a full-body realistic outfit image based on a user's photo,
-    preserving the natural face, hair, and skin tone — changing only the outfit.
+    Generate 2 full-body realistic outfit images based on a user's photo,
+    preserving the natural face, hair, skin tone, body proportions,
+    adjusting clothing according to measurements and body_shape.
     """
 
     try:
@@ -59,7 +60,7 @@ async def generate_image(
             measurements.append(f"height {height} cm")
         measure_text = ", ".join(measurements) if measurements else "average body proportions"
 
-        # --- 🔥 Prompt reforzado y en inglés ---
+        # --- 🔥 Prompt reforzado en inglés, manteniendo rostro/cabello intacto ---
         english_prompt = f"""
 Generate a full-body **photorealistic fashion image** of the person in the uploaded photo.
 
@@ -71,15 +72,15 @@ STRICT REQUIREMENTS:
 - Keep the background neutral and elegant (studio or minimalist style).
 
 Fashion Task:
-Create an outfit for a {gender_label} with a {body_shape} body type and {measure_text}.
+Create 2 similar outfits for a {gender_label} with a {body_shape} body type and {measure_text}.
+The outfits should respect the user's measurements and body proportions, adjusting clothing size accordingly.
 The outfit style should be {style}.
 Follow these additional user instructions: {prompt}.
+- Ensure both images are similar but with different clothing choices that suit the same context.
+- Output 2 high-quality, full-body images.
+- Provide a short fashion description in Spanish (1–2 sentences) for each outfit.
 
-Output:
-- One high-quality, full-body realistic image.
-- A short fashion description in **Spanish (1–2 sentences)** describing the outfit.
-
-Make the result suitable for a fashion app — consistent, realistic, elegant, and human-looking.
+Make the results suitable for a fashion app — consistent, realistic, elegant, and human-looking.
 """
 
         # --- Gemini API request ---
@@ -94,32 +95,28 @@ Make the result suitable for a fashion app — consistent, realistic, elegant, a
             config=types.GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"],
                 temperature=0.7,
+                candidate_count=2  # <-- solicitamos 2 imágenes
             ),
         )
 
         # --- Parse response ---
-        image_data = None
+        images_base64 = []
         text_response = "No hay descripción disponible."
-        mime_type = "image/png"
-
         if response.candidates:
-            parts = response.candidates[0].content.parts
-            for part in parts:
-                if hasattr(part, "inline_data") and part.inline_data:
-                    image_data = part.inline_data.data
-                    mime_type = getattr(part.inline_data, "mime_type", "image/png")
-                elif hasattr(part, "text") and part.text:
-                    text_response = part.text.strip()
+            for candidate in response.candidates:
+                for part in candidate.content.parts:
+                    if hasattr(part, "inline_data") and part.inline_data:
+                        img_data = part.inline_data.data
+                        mime = getattr(part.inline_data, "mime_type", "image/png")
+                        images_base64.append(f"data:{mime};base64,{base64.b64encode(img_data).decode()}")
+                    elif hasattr(part, "text") and part.text:
+                        text_response = part.text.strip()
 
-        if not image_data:
+        if not images_base64:
             raise HTTPException(status_code=500, detail="Image generation failed")
 
-        # --- Encode as base64 image URL ---
-        image_base64 = base64.b64encode(image_data).decode("utf-8")
-        image_url = f"data:{mime_type};base64,{image_base64}"
-
         return JSONResponse(content={
-            "image": image_url,
+            "images": images_base64,
             "text": text_response,
             "context_used": {
                 "gender": gender_label,
