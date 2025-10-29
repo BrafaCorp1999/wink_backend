@@ -18,3 +18,4 @@ app.add_middleware(
 app.include_router(tryon.router, prefix="/api")
 app.include_router(generate_image.router, prefix="/api")
 app.include_router(generate_body_model.router, prefix="/api")
+app.include_router(analyze_body_with_face.router, prefix="/api")
