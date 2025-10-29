@@ -13,31 +13,37 @@ router = APIRouter(prefix="/analyze-body-with-face", tags=["AI Analyze Body+Face
 @router.post("/")
 async def analyze_body_with_face(person_image: UploadFile = File(...)):
     """
-    Analiza el cuerpo y extrae rostro/base del usuario.
-    Devuelve medidas estimadas + rostro recortado (base64).
+    Analyze a full-body photo to estimate measurements and extract a clean, unaltered face crop.
+    Returns:
+        - JSON with body proportions (height, shoulders, waist, etc.)
+        - Base64 PNG face crop (unaltered, natural colors)
     """
     try:
-        # --- Validaciones ---
         ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
         user_bytes = await person_image.read()
         if person_image.content_type not in ALLOWED_MIME:
             raise HTTPException(status_code=400, detail="Unsupported image type")
 
-        # --- IA analiza cuerpo para obtener medidas ---
+        # === Gemini prompt (in English for better understanding) ===
         prompt = """
-Analiza esta imagen de una persona de cuerpo entero y devuelve solo un JSON estructurado con:
+Analyze the provided full-body image of a single person.
+Return a valid JSON object ONLY with the following structure, no explanations or extra text:
+
 {
-  "gender": "male|female",
-  "body_shape": "slim|average|curvy|muscular",
-  "height_estimated": <cm>,
-  "weight_estimated": <kg>,
-  "waist_estimated": <cm>,
-  "hips_estimated": <cm>,
-  "shoulders_estimated": <cm>,
-  "description": "breve descripción en español"
+  "gender": "male" | "female",
+  "body_shape": "slim" | "average" | "curvy" | "muscular",
+  "height_estimated_cm": <integer>,        // approximate height in centimeters
+  "weight_estimated_kg": <integer>,        // approximate weight in kilograms
+  "shoulders_cm": <integer>,
+  "chest_cm": <integer>,
+  "waist_cm": <integer>,
+  "hips_cm": <integer>,
+  "body_description": "1 short English sentence describing posture and build."
 }
-Sin texto adicional ni formato fuera del JSON.
-"""
+
+The estimation should be realistic based on the visible body proportions, not idealized.
+Do NOT include any text or symbols outside the JSON.
+        """
 
         contents = [
             prompt.strip(),
@@ -47,16 +53,16 @@ Sin texto adicional ni formato fuera del JSON.
         response = client.models.generate_content(
             model="gemini-2.0-flash-exp",
             contents=contents,
-            config={"temperature": 0.3, "response_modalities": ["TEXT"]},
+            config={"temperature": 0.2, "response_modalities": ["TEXT"]},
         )
 
         text_output = response.candidates[0].content.parts[0].text.strip()
         try:
             body_data = json.loads(text_output)
         except Exception:
-            body_data = {"raw_text": text_output}
+            body_data = {"raw_output": text_output, "note": "Parsing issue — not strict JSON."}
 
-        # --- Detección y recorte de rostro ---
+        # === Face detection and cropping ===
         np_img = np.frombuffer(user_bytes, np.uint8)
         img = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
 
@@ -65,22 +71,32 @@ Sin texto adicional ni formato fuera del JSON.
 
         faces = face_cascade.detectMultiScale(gray, 1.2, 5)
         if len(faces) == 0:
-            raise HTTPException(status_code=404, detail="No se detectó rostro en la imagen")
+            raise HTTPException(status_code=404, detail="No face detected in the image")
 
+        # Pick the largest face (in case multiple are found)
+        faces = sorted(faces, key=lambda f: f[2]*f[3], reverse=True)
         x, y, w, h = faces[0]
-        margin_y = int(h * 0.4)
-        y0 = max(0, y - margin_y)
-        y1 = min(img.shape[0], y + h + margin_y)
 
-        face_crop = img[y0:y1, x:x+w]
+        # Add margin for neck and upper hair area
+        margin_y_top = int(h * 0.4)
+        margin_y_bottom = int(h * 0.3)
+        margin_x = int(w * 0.15)
+
+        x0 = max(0, x - margin_x)
+        x1 = min(img.shape[1], x + w + margin_x)
+        y0 = max(0, y - margin_y_top)
+        y1 = min(img.shape[0], y + h + margin_y_bottom)
+
+        face_crop = img[y0:y1, x0:x1]
+
+        # Ensure no color/style modifications
         _, buffer = cv2.imencode(".png", face_crop)
         face_base64 = base64.b64encode(buffer).decode("utf-8")
         face_data_uri = f"data:image/png;base64,{face_base64}"
 
-        # --- Respuesta final ---
         return JSONResponse(content={
             "status": "ok",
-            "message": "Cuerpo analizado y rostro extraído correctamente.",
+            "message": "Body successfully analyzed and unaltered face extracted.",
             "body_data": body_data,
             "face_image_base64": face_data_uri
         })
