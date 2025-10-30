@@ -1,14 +1,21 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from google.genai import types
-import cv2
-import numpy as np
 import base64
 import traceback
 import json
+import numpy as np
 import os
 
-# === Intentar importar cliente centralizado ===
+# Intentar importar cv2 (modo seguro)
+try:
+    import cv2
+    OPENCV_AVAILABLE = True
+except Exception:
+    OPENCV_AVAILABLE = False
+    print("⚠️ OpenCV no disponible — el recorte de rostro será omitido.")
+
+# === Intentar importar el cliente Gemini central ===
 try:
     from utils.gemini_client import client
 except Exception:
@@ -21,22 +28,16 @@ except Exception:
         raise ValueError("Missing GEMINI_API_KEY in environment or .env file")
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    print("⚠️ Using fallback Gemini client from analyze_body_with_face.py")
+    print("⚠️ Usando cliente Gemini fallback desde analyze_body_with_face.py")
 
 router = APIRouter(
     prefix="/analyze-body-with-face",
     tags=["AI Analyze Body+Face"]
 )
 
-
 @router.post("/")
 async def analyze_body_with_face(person_image: UploadFile = File(...)):
-    """
-    Analyze a full-body photo to estimate measurements and extract a clean, unaltered face crop.
-    Returns:
-        - JSON with body proportions (height, shoulders, waist, etc.)
-        - Base64 PNG face crop (unaltered, natural colors)
-    """
+    """Analiza una foto de cuerpo completo para estimar medidas y extraer rostro sin alterar colores."""
     try:
         ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
         user_bytes = await person_image.read()
@@ -44,7 +45,7 @@ async def analyze_body_with_face(person_image: UploadFile = File(...)):
         if person_image.content_type not in ALLOWED_MIME:
             raise HTTPException(status_code=400, detail="Unsupported image type")
 
-        # === Gemini prompt ===
+        # === Prompt de análisis corporal ===
         prompt = """
 Analyze the provided full-body image of a single person.
 Return a valid JSON object ONLY with the following structure, no explanations or extra text:
@@ -70,6 +71,7 @@ Do NOT include any text or symbols outside the JSON.
             types.Part.from_bytes(data=user_bytes, mime_type=person_image.content_type),
         ]
 
+        # === Llamada a Gemini ===
         response = client.models.generate_content(
             model="gemini-2.0-flash-exp",
             contents=contents,
@@ -81,50 +83,45 @@ Do NOT include any text or symbols outside the JSON.
         try:
             body_data = json.loads(text_output)
         except Exception:
-            body_data = {
-                "raw_output": text_output,
-                "note": "Parsing issue — not strict JSON."
-            }
+            body_data = {"raw_output": text_output, "note": "Parsing issue — not strict JSON."}
 
-        # === Face detection and cropping ===
-        np_img = np.frombuffer(user_bytes, np.uint8)
-        img = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        # === Face detection ===
+        face_data_uri = None
 
-        face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
+        if OPENCV_AVAILABLE:
+            np_img = np.frombuffer(user_bytes, np.uint8)
+            img = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        faces = face_cascade.detectMultiScale(gray, 1.2, 5)
-        if len(faces) == 0:
-            raise HTTPException(status_code=404, detail="No face detected in the image")
+            face_cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            )
 
-        # Pick the largest face
-        faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
-        x, y, w, h = faces[0]
+            faces = face_cascade.detectMultiScale(gray, 1.2, 5)
+            if len(faces) > 0:
+                faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
+                x, y, w, h = faces[0]
 
-        # Add margin (for hair and neck)
-        margin_y_top = int(h * 0.4)
-        margin_y_bottom = int(h * 0.3)
-        margin_x = int(w * 0.15)
+                margin_y_top = int(h * 0.4)
+                margin_y_bottom = int(h * 0.3)
+                margin_x = int(w * 0.15)
 
-        x0 = max(0, x - margin_x)
-        x1 = min(img.shape[1], x + w + margin_x)
-        y0 = max(0, y - margin_y_top)
-        y1 = min(img.shape[0], y + h + margin_y_bottom)
+                x0 = max(0, x - margin_x)
+                x1 = min(img.shape[1], x + w + margin_x)
+                y0 = max(0, y - margin_y_top)
+                y1 = min(img.shape[0], y + h + margin_y_bottom)
 
-        face_crop = img[y0:y1, x0:x1]
+                face_crop = img[y0:y1, x0:x1]
 
-        # Encode cropped face
-        _, buffer = cv2.imencode(".png", face_crop)
-        face_base64 = base64.b64encode(buffer).decode("utf-8")
-        face_data_uri = f"data:image/png;base64,{face_base64}"
+                _, buffer = cv2.imencode(".png", face_crop)
+                face_base64 = base64.b64encode(buffer).decode("utf-8")
+                face_data_uri = f"data:image/png;base64,{face_base64}"
 
         return JSONResponse(content={
             "status": "ok",
-            "message": "Body successfully analyzed and unaltered face extracted.",
+            "message": "Body successfully analyzed.",
             "body_data": body_data,
-            "face_image_base64": face_data_uri
+            "face_image_base64": face_data_uri or "No face crop (OpenCV unavailable)"
         })
 
     except Exception as e:
