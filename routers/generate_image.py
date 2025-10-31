@@ -2,78 +2,72 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 from google import genai
 from google.genai import types
-import base64, traceback, os
-from dotenv import load_dotenv
+import base64, os, traceback, json
 
-load_dotenv()
 router = APIRouter()
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    raise ValueError("Missing GEMINI_API_KEY in .env")
-
-client = genai.Client(api_key=GEMINI_API_KEY)
-
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 @router.post("/generate-image")
 async def generate_image(
     person_image: UploadFile = File(...),
     prompt: str = Form(...),
 ):
-    """
-    Generate 2 ultra-realistic outfit variations using a pre-built prompt from frontend.
-    """
     try:
-        # -------------------- VALIDATIONS --------------------
-        MAX_MB = 10
-        ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
-
+        # Leer imagen
         img_bytes = await person_image.read()
-        if len(img_bytes) / (1024 * 1024) > MAX_MB:
-            raise HTTPException(status_code=400, detail="Image exceeds 10MB limit.")
-        if person_image.content_type not in ALLOWED_MIME:
-            raise HTTPException(status_code=400, detail="Unsupported image type.")
 
-        # -------------------- GEMINI GENERATION --------------------
-        contents = [
-            types.Part.from_text(text=prompt),  # ✅ FIXED
-            types.Part.from_bytes(data=img_bytes, mime_type=person_image.content_type),
-        ]
+        # 🧠 Prompt final (claro y enfocado)
+        final_prompt = f"""
+        {prompt}
 
+        Usa la imagen proporcionada como referencia del rostro y cuerpo.
+        No deformes el rostro, ni cambies el tono de piel o las proporciones del cuerpo.
+        Genera exactamente dos imágenes de cuerpo completo en diferentes combinaciones de atuendos,
+        y una descripción breve en español (máx 20 palabras) sobre el estilo general.
+        """
+
+        # 🚀 Enviar a tu modelo (ej. "gemini-1.5-flash" o tu versión previa)
         response = client.models.generate_content(
-            model="gemini-2.0-flash-exp-image-generation",
-            contents=contents,
-            config=types.GenerateContentConfig(
-                response_modalities=["TEXT", "IMAGE"],
-                temperature=0.7,
-            ),
+            model="gemini-1.5-flash",  # ✅ Cambia aquí por tu modelo exacto (ej: "gemini-1.0-pro-vision" o similar)
+            contents=[
+                types.Part.from_bytes(data=img_bytes, mime_type=person_image.content_type),
+                types.Part.from_text(final_prompt)
+            ],
+            generation_config=types.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema={
+                    "type": "object",
+                    "properties": {
+                        "images": {
+                            "type": "array",
+                            "items": {"type": "string", "description": "Base64 image data URIs"}
+                        },
+                        "description": {"type": "string"}
+                    },
+                    "required": ["images", "description"]
+                }
+            )
         )
 
-        # -------------------- PARSE RESPONSE --------------------
-        images_base64, text_response = [], ""
-        if response.candidates:
-            cand = response.candidates[0]
-            for part in cand.content.parts:
-                if getattr(part, "inline_data", None):
-                    data = part.inline_data.data
-                    mime = getattr(part.inline_data, "mime_type", "image/png")
-                    images_base64.append(
-                        f"data:{mime};base64,{base64.b64encode(data).decode()}"
-                    )
-                elif getattr(part, "text", None):
-                    text_response += part.text.strip() + " "
+        raw_output = response.text
+        print("🟩 RAW OUTPUT:", raw_output)
 
-        if not images_base64:
-            raise HTTPException(status_code=500, detail="No images generated from model.")
+        # Intentar parsear JSON seguro
+        try:
+            data = json.loads(raw_output)
+        except Exception as e:
+            print("⚠️ Error parseando JSON:", e)
+            data = {}
 
-        # -------------------- RETURN RESPONSE --------------------
-        return JSONResponse(content={
-            "success": True,
-            "images": images_base64[:2],
-            "description": text_response.strip()
-        })
+        if not data or "images" not in data:
+            raise HTTPException(status_code=500, detail="El modelo no devolvió imágenes válidas.")
+
+        # Validar formato
+        if len(data["images"]) == 0:
+            raise HTTPException(status_code=500, detail="No se generaron imágenes.")
+
+        return JSONResponse(content=data)
 
     except Exception as e:
-        print("❌ Error in /generate-image:", e)
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"❌ Error en /generate-image: {str(e)}")
