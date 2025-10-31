@@ -1,15 +1,17 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 from google.genai import types
 import base64, traceback, json, numpy as np, os
 
+# --- Try to load OpenCV if available ---
 try:
     import cv2
     OPENCV_AVAILABLE = True
 except Exception:
     OPENCV_AVAILABLE = False
-    print("⚠️ OpenCV no disponible — el recorte de rostro será omitido.")
+    print("⚠️ OpenCV not available — face cropping will be skipped.")
 
+# --- Load Gemini client ---
 try:
     from utils.gemini_client import client
 except Exception:
@@ -22,14 +24,21 @@ except Exception:
         raise ValueError("Missing GEMINI_API_KEY in environment or .env file")
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    print("⚠️ Usando cliente Gemini fallback desde analyze_body_with_face.py")
+    print("⚠️ Using fallback Gemini client from analyze_body_with_face.py")
 
+# --- Router setup ---
 router = APIRouter(prefix="/analyze-body-with-face", tags=["AI Analyze Body+Face"])
 
 
 @router.post("/")
-async def analyze_body_with_face(person_image: UploadFile = File(...)):
-    """Analiza una foto completa: rostro + cuerpo, devolviendo rostro separado y medidas aproximadas."""
+async def analyze_body_with_face(
+    person_image: UploadFile = File(...),
+    gender_hint: str = Form(None)
+):
+    """
+    Analyze a full-body image of a person. Detect body shape, estimate measurements,
+    and optionally crop the face. Returns JSON + face image (Base64).
+    """
     try:
         ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
         user_bytes = await person_image.read()
@@ -37,30 +46,34 @@ async def analyze_body_with_face(person_image: UploadFile = File(...)):
         if person_image.content_type not in ALLOWED_MIME:
             raise HTTPException(status_code=400, detail="Unsupported image type")
 
-        # 🧠 Prompt robusto para análisis corporal + postura
-        prompt = """
-Analyze the provided full-body photo of a single person and return ONLY valid JSON — no text before or after.
-Estimate physical attributes realistically (not idealized).
-Structure and rules:
+        # --- Normalize gender hint ---
+        gender_hint = (gender_hint or "").lower().strip()
+        gender_hint = gender_hint if gender_hint in ["male", "female"] else "unknown"
 
-{
+        # --- English-only structured prompt ---
+        prompt = f"""
+Analyze the provided full-body image of a person and return ONLY valid JSON (no explanations, no markdown).
+
+Use this hint for gender if the visual features are ambiguous: "{gender_hint}"
+
+Expected JSON structure:
+{{
   "gender": "male" | "female",
   "body_shape": "slim" | "average" | "curvy" | "muscular",
-  "height_estimated_cm": integer,
-  "weight_estimated_kg": integer,
-  "shoulders_cm": integer,
-  "chest_cm": integer,
-  "waist_cm": integer,
-  "hips_cm": integer,
-  "arms_cm": integer,
-  "body_description": "1 short sentence in English about posture and build"
-}
+  "height_estimated_cm": int,
+  "weight_estimated_kg": int,
+  "shoulders_cm": int,
+  "chest_cm": int,
+  "waist_cm": int,
+  "hips_cm": int,
+  "arms_cm": int,
+  "body_description": "1 short English sentence about posture and build"
+}}
 
 Rules:
-- Always include numeric values for all measurements.
-- Use integers only.
-- Do NOT include text outside the JSON.
-- Assume a real adult human body, realistic proportions, and neutral pose.
+- Be realistic; do not idealize or exaggerate body proportions.
+- Measurements should be approximate but plausible.
+- Output only strict JSON, nothing else.
 """
 
         contents = [
@@ -68,6 +81,7 @@ Rules:
             types.Part.from_bytes(data=user_bytes, mime_type=person_image.content_type),
         ]
 
+        # --- Call Gemini model ---
         response = client.models.generate_content(
             model="gemini-2.0-flash-exp",
             contents=contents,
@@ -75,14 +89,27 @@ Rules:
         )
 
         raw_text = response.candidates[0].content.parts[0].text.strip()
-        raw_text = raw_text.replace("```json", "").replace("```", "").strip()
+        raw_text = (
+            raw_text.replace("```json", "")
+            .replace("```", "")
+            .replace("“", '"')
+            .replace("”", '"')
+            .strip()
+        )
 
+        # --- Try to parse JSON safely ---
         try:
             body_data = json.loads(raw_text)
         except Exception:
             body_data = {"raw_output": raw_text, "note": "Could not parse clean JSON"}
 
-        # 🧍‍♀️ Recorte de rostro con OpenCV
+        # --- Fallback gender if missing ---
+        if isinstance(body_data, dict) and (
+            "gender" not in body_data or body_data.get("gender") == "unknown"
+        ):
+            body_data["gender"] = gender_hint
+
+        # --- Optional: crop face if OpenCV available ---
         face_data_uri = None
         if OPENCV_AVAILABLE:
             np_img = np.frombuffer(user_bytes, np.uint8)
@@ -95,10 +122,11 @@ Rules:
             faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(80, 80))
 
             if len(faces) > 0:
+                # Sort by biggest detected face
                 faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
                 x, y, w, h = faces[0]
 
-                # Margen para capturar cabello y parte del cuello
+                # Margin to include hair and part of the neck
                 x0 = max(0, x - int(w * 0.2))
                 y0 = max(0, y - int(h * 0.4))
                 x1 = min(img.shape[1], x + w + int(w * 0.2))
@@ -108,12 +136,15 @@ Rules:
                 _, buf = cv2.imencode(".png", face_crop)
                 face_data_uri = f"data:image/png;base64,{base64.b64encode(buf).decode()}"
 
-        return JSONResponse(content={
-            "status": "ok",
-            "message": "Body and face analyzed successfully.",
-            "body_data": body_data,
-            "face_image_base64": face_data_uri or None
-        })
+        # --- Response payload ---
+        return JSONResponse(
+            content={
+                "status": "ok",
+                "message": "Body and face analyzed successfully.",
+                "body_data": body_data,
+                "face_image_base64": face_data_uri or None,
+            }
+        )
 
     except Exception as e:
         print("❌ Error in /analyze-body-with-face:", e)
