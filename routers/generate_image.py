@@ -2,13 +2,12 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 from google import genai
 from google.genai import types
-import base64, traceback, os, json
+import base64, traceback, os
 from dotenv import load_dotenv
 
 load_dotenv()
 router = APIRouter()
 
-# --- Cargar API key y cliente ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("Missing GEMINI_API_KEY in .env")
@@ -21,10 +20,11 @@ async def generate_image(
     prompt: str = Form(...)
 ):
     """
-    Genera dos imágenes realistas de cuerpo completo y una descripción corta en español.
+    Generate TWO ultra-realistic outfit variations using the user prompt and image.
+    Returns: JSON with 'images' (two base64 strings) and 'description' (short Spanish text).
     """
     try:
-        # -------------------- VALIDACIONES --------------------
+        # -------------------- VALIDATIONS --------------------
         MAX_MB = 10
         ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
 
@@ -35,13 +35,13 @@ async def generate_image(
             raise HTTPException(status_code=400, detail="Unsupported image type.")
 
         # -------------------- DEBUG --------------------
-        print(f"📥 Prompt recibido: {prompt[:200]}...")  # mostrar primeros 200 caracteres
+        print("📥 Prompt recibido:", prompt[:200], "...")
         print(f"📥 Tamaño de imagen: {len(img_bytes)/1024:.2f} KB, tipo: {person_image.content_type}")
 
         # -------------------- GEMINI GENERATION --------------------
         contents = [
             types.Part.from_bytes(data=img_bytes, mime_type=person_image.content_type),
-            types.Part.from_text(prompt)  # ✅ Solo un argumento posicional
+            types.Part.from_text(str(prompt))  # ⚠️ string plano
         ]
 
         response = client.models.generate_content(
@@ -54,41 +54,37 @@ async def generate_image(
         )
 
         # -------------------- PARSE RESPONSE --------------------
-        images_base64, descriptions = [], []
-
+        images_base64, text_response = [], ""
         if response.candidates:
             cand = response.candidates[0]
             for part in cand.content.parts:
-                # Si viene imagen
                 if getattr(part, "inline_data", None):
                     data = part.inline_data.data
                     mime = getattr(part.inline_data, "mime_type", "image/png")
                     images_base64.append(
                         f"data:{mime};base64,{base64.b64encode(data).decode()}"
                     )
-                # Si viene texto
                 elif getattr(part, "text", None):
-                    text_str = part.text.strip()
-                    # Separar por línea y traducir al español si quieres (simple ejemplo)
-                    if text_str:
-                        descriptions.append(text_str)
+                    text_response += part.text.strip() + " "
 
-        # Validar cantidad de imágenes y descripciones
-        if len(images_base64) < 2:
-            print("⚠️ Se generó menos de 2 imágenes.")
+        if not images_base64:
+            raise HTTPException(status_code=500, detail="No images generated from model.")
+
+        # Solo tomar dos imágenes
         images_base64 = images_base64[:2]
-        descriptions = descriptions[:2]
-        if not descriptions:
-            descriptions = ["Outfit generado.", "Outfit generado."]
+
+        # -------------------- DEBUG FINAL --------------------
+        print("📊 Imágenes generadas:", len(images_base64))
+        print("📄 Descripción:", text_response.strip())
 
         # -------------------- RETURN RESPONSE --------------------
         return JSONResponse(content={
             "success": True,
             "images": images_base64,
-            "descriptions": descriptions
+            "description": text_response.strip()[:200]  # corto y en español
         })
 
     except Exception as e:
         print("❌ Error en /generate-image:", e)
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"❌ Error en /generate-image: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
