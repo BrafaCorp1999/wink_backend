@@ -14,6 +14,7 @@ if not GEMINI_API_KEY:
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
+
 @router.post("/generate-image")
 async def generate_image(
     person_image: UploadFile = File(...),
@@ -35,7 +36,7 @@ async def generate_image(
 
         # -------------------- GEMINI GENERATION --------------------
         contents = [
-            types.Part.from_text(prompt),  # ✅ solo un argumento
+            types.Part.from_text(text=prompt),  # ✅ FIXED
             types.Part.from_bytes(data=img_bytes, mime_type=person_image.content_type),
         ]
 
