@@ -14,85 +14,89 @@ if not GEMINI_API_KEY:
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-
 @router.post("/generate-image")
 async def generate_image(
     person_image: UploadFile = File(...),
-    prompt: str = Form(...),
-    gender: str = Form("female"),
-    model_type: str = Form("realistic"),
-    style: str = Form("modern"),
-    body_shape: str = Form(None),
-    waist: float = Form(None),
-    hips: float = Form(None),
+    gender: str = Form(...),
+    body_shape: str = Form("average"),
     height: float = Form(None),
+    weight: float = Form(None),
+    style: str = Form("casual"),
+    occasion: str = Form("daily"),
+    climate: str = Form("temperate"),
+    preferred_colors: str = Form("neutral tones"),
+    model_type: str = Form("realistic"),
 ):
-    """Generate two realistic outfit variations while preserving identity and realism."""
+    """
+    Generate 2 ultra-realistic outfit variations for the given person image.
+    The system preserves identity and realism based on physical attributes.
+    """
     try:
+        # -------------------- VALIDATIONS --------------------
         MAX_MB = 10
         ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
-        img_bytes = await person_image.read()
 
+        img_bytes = await person_image.read()
         if len(img_bytes) / (1024 * 1024) > MAX_MB:
-            raise HTTPException(status_code=400, detail="Image exceeds 10MB")
+            raise HTTPException(status_code=400, detail="Image exceeds 10MB limit.")
         if person_image.content_type not in ALLOWED_MIME:
-            raise HTTPException(status_code=400, detail="Unsupported image type")
+            raise HTTPException(status_code=400, detail="Unsupported image type.")
 
         gender_label = "female" if str(gender).lower().startswith("f") else "male"
         body_shape = body_shape or "average"
         style = style or "casual"
+        occasion = occasion or "daily"
+        climate = climate or "temperate"
+        preferred_colors = preferred_colors or "neutral tones"
 
-        measure_text = ", ".join(
-            f"{k} {v} cm"
-            for k, v in {
-                "waist": waist,
-                "hips": hips,
-                "height": height
-            }.items() if v
-        ) or "average body proportions"
+        measurements = []
+        if height: measurements.append(f"height {height} cm")
+        if weight: measurements.append(f"weight {weight} kg")
+        measure_text = ", ".join(measurements) if measurements else "average body proportions"
 
-        # 🧠 Prompt mejorado para realismo del outfit
-        base_prompt = f"""
+        # -------------------- PROMPT --------------------
+        prompt = f"""
 Generate 2 ultra-realistic, full-body fashion outfit variations for the person in the uploaded image.
-
-STRICT RULES:
-- Maintain the exact face, hairstyle, skin tone, and expression.
-- Preserve the body shape and posture exactly.
-- Ensure clothing fits naturally on the body (no overlay or sticker effect).
-- Include realistic lighting, shadows, and fabric textures.
-- Avoid AI distortion or exaggerated proportions.
 
 CONTEXT:
 - Gender: {gender_label}
-- Body shape: {body_shape}
+- Body type: {body_shape}
 - Measurements: {measure_text}
 - Preferred style: {style}
+- Occasion: {occasion}
+- Climate: {climate}
+- Preferred colors: {preferred_colors}
 - Model type: {model_type}
 
-TASK:
-Create 2 distinct photorealistic outfit variations suitable for this person, keeping proportions consistent.
+STRICT IMAGE RULES:
+- Preserve the user's face, hairstyle, and skin tone exactly.
+- Do not change facial features, ethnicity, or proportions.
+- Maintain the same pose and lighting conditions.
+- Replace only clothing and accessories with realistic fashion outfits.
+- Output must look natural, photorealistic, and consistent with the original person.
 
-Output:
-- 2 high-quality outfit images.
-- A short Spanish description (1 sentence) describing the outfit style.
-"""
+OUTPUT REQUIREMENTS:
+- Provide 2 high-quality full-body images (base64).
+- Include one short English sentence describing each outfit.
+        """
 
         contents = [
-            base_prompt.strip(),
+            types.Part.from_text(prompt.strip()),
             types.Part.from_bytes(data=img_bytes, mime_type=person_image.content_type),
         ]
 
+        # -------------------- GEMINI GENERATION --------------------
         response = client.models.generate_content(
             model="gemini-2.0-flash-exp-image-generation",
             contents=contents,
             config=types.GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"],
-                temperature=0.6,
+                temperature=0.7,
             ),
         )
 
+        # -------------------- PARSE RESPONSE --------------------
         images_base64, text_response = [], ""
-
         if response.candidates:
             cand = response.candidates[0]
             for part in cand.content.parts:
@@ -106,16 +110,22 @@ Output:
                     text_response += part.text.strip() + " "
 
         if not images_base64:
-            raise HTTPException(status_code=500, detail="Image generation failed")
+            raise HTTPException(status_code=500, detail="No images generated from model.")
 
+        # -------------------- RETURN STRUCTURED RESPONSE --------------------
         return JSONResponse(content={
+            "success": True,
             "images": images_base64[:2],
-            "text": text_response.strip(),
+            "description": text_response.strip(),
             "context_used": {
                 "gender": gender_label,
                 "body_shape": body_shape,
                 "measurements": measure_text,
-                "style": style
+                "style": style,
+                "occasion": occasion,
+                "climate": climate,
+                "preferred_colors": preferred_colors,
+                "model_type": model_type
             }
         })
 
