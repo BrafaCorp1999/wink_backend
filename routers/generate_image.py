@@ -17,19 +17,10 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 @router.post("/generate-image")
 async def generate_image(
     person_image: UploadFile = File(...),
-    gender: str = Form(...),
-    body_shape: str = Form("average"),
-    height: float = Form(None),
-    weight: float = Form(None),
-    style: str = Form("casual"),
-    occasion: str = Form("daily"),
-    climate: str = Form("temperate"),
-    preferred_colors: str = Form("neutral tones"),
-    model_type: str = Form("realistic"),
+    prompt: str = Form(...),
 ):
     """
-    Generate 2 ultra-realistic outfit variations for the given person image.
-    The system preserves identity and realism based on physical attributes.
+    Generate 2 ultra-realistic outfit variations using a pre-built prompt from frontend.
     """
     try:
         # -------------------- VALIDATIONS --------------------
@@ -42,50 +33,12 @@ async def generate_image(
         if person_image.content_type not in ALLOWED_MIME:
             raise HTTPException(status_code=400, detail="Unsupported image type.")
 
-        gender_label = "female" if str(gender).lower().startswith("f") else "male"
-        body_shape = body_shape or "average"
-        style = style or "casual"
-        occasion = occasion or "daily"
-        climate = climate or "temperate"
-        preferred_colors = preferred_colors or "neutral tones"
-
-        measurements = []
-        if height: measurements.append(f"height {height} cm")
-        if weight: measurements.append(f"weight {weight} kg")
-        measure_text = ", ".join(measurements) if measurements else "average body proportions"
-
-        # -------------------- PROMPT --------------------
-        prompt = f"""
-Generate 2 ultra-realistic, full-body fashion outfit variations for the person in the uploaded image.
-
-CONTEXT:
-- Gender: {gender_label}
-- Body type: {body_shape}
-- Measurements: {measure_text}
-- Preferred style: {style}
-- Occasion: {occasion}
-- Climate: {climate}
-- Preferred colors: {preferred_colors}
-- Model type: {model_type}
-
-STRICT IMAGE RULES:
-- Preserve the user's face, hairstyle, and skin tone exactly.
-- Do not change facial features, ethnicity, or proportions.
-- Maintain the same pose and lighting conditions.
-- Replace only clothing and accessories with realistic fashion outfits.
-- Output must look natural, photorealistic, and consistent with the original person.
-
-OUTPUT REQUIREMENTS:
-- Provide 2 high-quality full-body images (base64).
-- Include one short English sentence describing each outfit.
-        """
-
+        # -------------------- GEMINI GENERATION --------------------
         contents = [
-            types.Part.from_text(prompt.strip()),
+            types.Part.from_text(prompt),  # ✅ solo un argumento
             types.Part.from_bytes(data=img_bytes, mime_type=person_image.content_type),
         ]
 
-        # -------------------- GEMINI GENERATION --------------------
         response = client.models.generate_content(
             model="gemini-2.0-flash-exp-image-generation",
             contents=contents,
@@ -112,21 +65,11 @@ OUTPUT REQUIREMENTS:
         if not images_base64:
             raise HTTPException(status_code=500, detail="No images generated from model.")
 
-        # -------------------- RETURN STRUCTURED RESPONSE --------------------
+        # -------------------- RETURN RESPONSE --------------------
         return JSONResponse(content={
             "success": True,
             "images": images_base64[:2],
-            "description": text_response.strip(),
-            "context_used": {
-                "gender": gender_label,
-                "body_shape": body_shape,
-                "measurements": measure_text,
-                "style": style,
-                "occasion": occasion,
-                "climate": climate,
-                "preferred_colors": preferred_colors,
-                "model_type": model_type
-            }
+            "description": text_response.strip()
         })
 
     except Exception as e:
