@@ -39,21 +39,28 @@ async def analyze_body_with_face(person_image: UploadFile = File(...)):
 
         # 🧠 Prompt robusto para análisis corporal + postura
         prompt = """
-Analyze the provided full-body image of a person. Return ONLY valid JSON, with no explanations.
-Structure:
+Analyze the provided full-body photo of a single person and return ONLY valid JSON — no text before or after.
+Estimate physical attributes realistically (not idealized).
+Structure and rules:
+
 {
   "gender": "male" | "female",
   "body_shape": "slim" | "average" | "curvy" | "muscular",
-  "height_estimated_cm": int,
-  "weight_estimated_kg": int,
-  "shoulders_cm": int,
-  "chest_cm": int,
-  "waist_cm": int,
-  "hips_cm": int,
-  "arms_cm": int,
-  "body_description": "1 short English sentence about posture and build"
+  "height_estimated_cm": integer,
+  "weight_estimated_kg": integer,
+  "shoulders_cm": integer,
+  "chest_cm": integer,
+  "waist_cm": integer,
+  "hips_cm": integer,
+  "arms_cm": integer,
+  "body_description": "1 short sentence in English about posture and build"
 }
-Ensure realism, not idealized measurements.
+
+Rules:
+- Always include numeric values for all measurements.
+- Use integers only.
+- Do NOT include text outside the JSON.
+- Assume a real adult human body, realistic proportions, and neutral pose.
 """
 
         contents = [
