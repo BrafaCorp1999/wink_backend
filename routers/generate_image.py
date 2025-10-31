@@ -53,19 +53,28 @@ async def generate_image(
 
         # 🧠 Prompt mejorado para realismo del outfit
         base_prompt = f"""
-Generate 2 full-body ultra-realistic fashion outfit images of the person in the uploaded photo.
+Generate 2 ultra-realistic, full-body fashion outfit variations for the person in the uploaded image.
 
 STRICT RULES:
-- Maintain exact face, hairstyle, skin tone, and expression.
-- Preserve body shape and posture 100%.
-- Ensure clothing looks naturally worn on the body — no overlay or sticker effect.
-- Include natural lighting, shadows, and realistic cloth textures.
+- Maintain the exact face, hairstyle, skin tone, and expression.
+- Preserve the body shape and posture exactly.
+- Ensure clothing fits naturally on the body (no overlay or sticker effect).
+- Include realistic lighting, shadows, and fabric textures.
 - Avoid AI distortion or exaggerated proportions.
-- Gender: {gender_label}, Body shape: {body_shape}, Measurements: {measure_text}.
-- Outfit style: {style}.
-- {prompt}
 
-Output: 2 distinct high-quality outfit variations and a short Spanish text (1–2 sentences) describing them.
+CONTEXT:
+- Gender: {gender_label}
+- Body shape: {body_shape}
+- Measurements: {measure_text}
+- Preferred style: {style}
+- Model type: {model_type}
+
+TASK:
+Create 2 distinct photorealistic outfit variations suitable for this person, keeping proportions consistent.
+
+Output:
+- 2 high-quality outfit images.
+- A short Spanish description (1 sentence) describing the outfit style.
 """
 
         contents = [
