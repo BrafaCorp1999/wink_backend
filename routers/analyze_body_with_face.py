@@ -75,6 +75,7 @@ Rules:
         )
 
         raw_text = response.candidates[0].content.parts[0].text.strip()
+        raw_text = raw_text.replace("```json", "").replace("```", "").strip()
 
         try:
             body_data = json.loads(raw_text)
