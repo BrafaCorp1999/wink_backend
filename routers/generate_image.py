@@ -17,10 +17,14 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 @router.post("/generate-image")
 async def generate_image(
     person_image: UploadFile = File(...),
-    prompt: str = Form(...)
+    prompt: str = Form(...),
+    type: str = Form("body")  # "body" o "selfie"
 ):
     """
     Generate TWO ultra-realistic outfit variations using the user prompt and image.
+    type:
+        "body" -> imagen cuerpo completo
+        "selfie" -> imagen selfie con medidas
     Returns: JSON with 'images' (two base64 strings) and 'description' (short Spanish text).
     """
     try:
@@ -34,14 +38,19 @@ async def generate_image(
         if person_image.content_type not in ALLOWED_MIME:
             raise HTTPException(status_code=400, detail="Unsupported image type.")
 
-        # -------------------- DEBUG --------------------
-        print("📥 Prompt recibido:", prompt[:200], "...")
-        print(f"📥 Tamaño de imagen: {len(img_bytes)/1024:.2f} KB, tipo: {person_image.content_type}")
+        # -------------------- ADJUST PROMPT BASED ON TYPE --------------------
+        if type not in ["body", "selfie"]:
+            type = "body"
+
+        if type == "body":
+            prompt += "\nUse the full-body image to generate outfit. Maintain body proportions and face."
+        else:
+            prompt += "\nUse this selfie image for generating outfit. Preserve face accurately and use the provided measurements."
 
         # -------------------- GEMINI GENERATION --------------------
         contents = [
             types.Part.from_bytes(data=img_bytes, mime_type=person_image.content_type),
-            types.Part(text=str(prompt))  # ✅ nuevo formato
+            types.Part(text=str(prompt))
         ]
 
         response = client.models.generate_content(
@@ -72,10 +81,6 @@ async def generate_image(
 
         # Solo tomar dos imágenes
         images_base64 = images_base64[:2]
-
-        # -------------------- DEBUG FINAL --------------------
-        print("📊 Imágenes generadas:", len(images_base64))
-        print("📄 Descripción:", text_response.strip())
 
         # -------------------- RETURN RESPONSE --------------------
         return JSONResponse(content={
