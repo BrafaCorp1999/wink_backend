@@ -43,9 +43,9 @@ async def generate_image(
             type = "body"
 
         if type == "body":
-            prompt += "\nUse the full-body image to generate outfit. Maintain body proportions and face."
+            prompt += "\nUse the full-body image to generate outfit. Maintain body proportions and face. Clothing should fit naturally."
         else:
-            prompt += "\nUse this selfie image for generating outfit. Preserve face accurately and use the provided measurements."
+            prompt += "\nUse this selfie image for generating outfit. Preserve face accurately. Generate outfit according to the provided measurements. Clothing should fit naturally."
 
         # -------------------- GEMINI GENERATION --------------------
         contents = [
