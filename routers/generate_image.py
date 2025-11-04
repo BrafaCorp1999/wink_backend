@@ -41,11 +41,11 @@ async def generate_image(
         # -------------------- GEMINI GENERATION --------------------
         contents = [
             types.Part.from_bytes(data=img_bytes, mime_type=person_image.content_type),
-            types.Part.from_text(str(prompt))  # ⚠️ string plano
+            types.Part(text=str(prompt))  # ✅ nuevo formato
         ]
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",  # tu modelo anterior
+            model="gemini-2.0-flash-exp",
             contents=contents,
             config=types.GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"],
@@ -81,7 +81,7 @@ async def generate_image(
         return JSONResponse(content={
             "success": True,
             "images": images_base64,
-            "description": text_response.strip()[:200]  # corto y en español
+            "description": text_response.strip()[:200]
         })
 
     except Exception as e:
