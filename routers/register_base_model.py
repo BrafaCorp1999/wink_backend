@@ -19,27 +19,42 @@ async def register_base_model(
     user_id: str = Form(...),
     full_body: UploadFile = File(...),
 ):
+    """
+    Scans a full-body image to obtain the user's face and detailed body measurements.
+    Returns: cropped face image in base64, body measurements, and body type.
+    """
     try:
-        # Leer bytes de la imagen enviada
         image_bytes = await full_body.read()
 
-        # --- PROMPT para escaneo facial + corporal ---
+        # ---------------------- PROMPT ----------------------
         prompt = """
-You are an AI specialized in facial-body mapping for fashion.
-Analyze the given full-body image and:
-1. Detect and crop the face region (keep natural proportions, no edits).
-2. Estimate approximate body measurements (height, shoulders, chest, waist, hips).
-3. Return a JSON structure like:
+You are an expert AI in body analysis and facial recognition.
+Analyze the following full-body image and return the following:
+
+1. A cropped image of the face (do not distort, no filters, neutral background).
+2. A set of body measurements in centimeters in the following JSON format:
 {
- "measurements": {"height_cm": ..., "chest_cm": ..., "waist_cm": ..., "hips_cm": ..., "shoulders_cm": ...},
- "contexture": "slim/average/athletic/plus",
- "notes": "optional details"
+ "measurements": {
+    "height_cm": ...,
+    "shoulders_cm": ...,
+    "chest_cm": ...,
+    "waist_cm": ...,
+    "hips_cm": ...,
+    "thigh_cm": ...,
+    "calf_cm": ...,
+    "leg_length_cm": ...,
+    "neck_cm": ...,
+    "torso_cm": ...
+ },
+ "body_type": "slim | normal | athletic | plus",
+ "notes": "optional details or estimates"
 }
-Also return the cropped face as a base64 image.
-Do NOT generate new clothes or modify appearance.
+Measurements must be realistic and proportional for a human body.
+
+3. Also return the cropped face image in base64 (field name: "face_base64").
+Do not generate clothes or change posture.
 """
 
-        # Llamada a Gemini
         result = client.models.generate_content(
             model="gemini-1.5-pro",
             contents=[
@@ -49,22 +64,24 @@ Do NOT generate new clothes or modify appearance.
         )
 
         text_response = result.text.strip()
-        print("🧠 AI Raw Response:", text_response)
+        print("🧠 AI Raw Response:", text_response[:300])
 
-        # Extraer JSON del resultado
+        # Extract the JSON from the response
         json_start = text_response.find("{")
         json_end = text_response.rfind("}") + 1
         json_part = text_response[json_start:json_end]
         data_json = json.loads(json_part)
 
-        # Obtener imagen del rostro
-        face_base64 = data_json.get("face_image")
-        if not face_base64:
-            raise HTTPException(status_code=400, detail="Face image not returned.")
+        # Validate fields
+        measurements = data_json.get("measurements", {})
+        body_type = data_json.get("body_type", "normal")
+        face_b64 = data_json.get("face_base64")
 
-        face_bytes = base64.b64decode(face_base64)
+        if not face_b64:
+            raise HTTPException(status_code=400, detail="No face_base64 returned.")
 
-        # Guardar en Storage
+        # Save face and full-body image to Cloud Storage
+        face_bytes = base64.b64decode(face_b64)
         face_blob = bucket.blob(f"users/{user_id}/face.png")
         face_blob.upload_from_string(face_bytes, content_type="image/png")
         face_url = face_blob.public_url
@@ -73,29 +90,27 @@ Do NOT generate new clothes or modify appearance.
         full_blob.upload_from_string(image_bytes, content_type=full_body.content_type)
         full_url = full_blob.public_url
 
-        # Guardar en Firestore
+        # Save to Firestore
         model_data = {
             "user_id": user_id,
-            "model_type": "scan_body",
-            "face_ref": face_url,
-            "full_body_ref": full_url,
-            "measurements": data_json.get("measurements", {}),
-            "contexture": data_json.get("contexture", "average"),
+            "base_model": True,
+            "face_url": face_url,
+            "full_body_url": full_url,
+            "measurements": measurements,
+            "body_type": body_type,
             "created_at": firestore.SERVER_TIMESTAMP,
         }
 
         db.collection("user_models").document(user_id).set(model_data)
 
-        return JSONResponse(
-            {
-                "status": "ok",
-                "message": "Base model registered successfully",
-                "face_url": face_url,
-                "measurements": data_json.get("measurements"),
-                "contexture": data_json.get("contexture"),
-            }
-        )
+        return JSONResponse({
+            "status": "ok",
+            "message": "Base model registered successfully",
+            "face_url": face_url,
+            "measurements": measurements,
+            "body_type": body_type
+        })
 
     except Exception as e:
-        print("❌ Error:", traceback.format_exc())
+        print("❌ Error in /register_base_model:", traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
