@@ -1,24 +1,27 @@
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from google import genai
 import os
 
 router = APIRouter()
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+# Usa tu API key actual
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 @router.get("/list_models")
 async def list_models():
-    models_info = []
     try:
-        models = client.models.list_models()
-        for m in models:
-            models_info.append({
+        models = client.models.list()  # ✅ método correcto
+        model_info = [
+            {
                 "name": m.name,
-                "display_name": getattr(m, "display_name", None),
-                "supported_modalities": getattr(m, "supported_modalities", None),
-                "description": getattr(m, "description", None),
-                "release_date": getattr(m, "release_date", None),
-                "capabilities": getattr(m, "capabilities", None)
-            })
-        return {"status": "ok", "models": models_info}
+                "description": getattr(m, "description", ""),
+                "supported_modalities": getattr(m, "supported_modalities", []),
+                "max_output_tokens": getattr(m, "max_output_tokens", None),
+            }
+            for m in models
+        ]
+        return JSONResponse({"status": "ok", "models": model_info})
     except Exception as e:
-        return {"status": "error", "detail": str(e)}
+        return JSONResponse({"status": "error", "detail": str(e)})
