@@ -42,7 +42,7 @@ Return the 3 generated images as base64 strings.
 
         # Llamada a Gemini
         result = client.models.generate_content(
-            model="gemini-1.5-pro",
+            model="gemini-2.0-flash-exp",
             contents=[types.Part.from_text(text=prompt)],  # ✅ Keyword correcto
         )
 
