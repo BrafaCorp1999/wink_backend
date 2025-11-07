@@ -1,12 +1,18 @@
-# routes/generate_outfit_demo.py
+# routers/generate_outfit_demo.py
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from google import genai
 from google.genai import types
-import base64, traceback
+import base64, traceback, os
+from dotenv import load_dotenv
+
+load_dotenv()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("Missing GEMINI_API_KEY in environment or .env file")
 
 router = APIRouter()
-client = genai.Client(api_key="YOUR_GEMINI_API_KEY")  # Asegúrate de cargar desde env
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 @router.post("/generate_outfit_demo")
 async def generate_outfit_demo(payload: dict):
