@@ -5,7 +5,7 @@ import os
 router = APIRouter()
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-@router.get("/api/list_models")
+@router.get("/list_models")
 async def list_models():
     models_info = []
     try:
