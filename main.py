@@ -7,7 +7,8 @@ from routers import tryon
 from routers import generate_image
 from routers import generate_body_model
 from routers import analyze_body_with_face
-from routers import generate_outfit_demo  # <-- NUEVO
+from routers import generate_outfit_demo
+from routers import list_models
 
 app = FastAPI(title="AI Outfit Backend", version="1.0")
 
@@ -25,7 +26,8 @@ app.include_router(tryon.router, prefix="/api")
 app.include_router(generate_image.router, prefix="/api")
 app.include_router(generate_body_model.router, prefix="/api")
 app.include_router(analyze_body_with_face.router, prefix="/api")
-app.include_router(generate_outfit_demo.router, prefix="/api")  # <-- Incluir correctamente
+app.include_router(generate_outfit_demo.router, prefix="/api")
+app.include_router(list_models.router, prefix="/api")
 
 @app.get("/")
 def root():
