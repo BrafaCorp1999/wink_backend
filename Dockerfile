@@ -1,7 +1,7 @@
 # --- Imagen base ligera con Python 3.10 ---
 FROM python:3.10-slim
 
-# --- Instalar dependencias del sistema necesarias para OpenCV, Mediapipe y PyTorch ---
+# --- Instalar dependencias del sistema necesarias para OpenCV y Mediapipe ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libgl1 \
