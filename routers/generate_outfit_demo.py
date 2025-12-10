@@ -2,71 +2,134 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 import base64, traceback, io, os
 from PIL import Image
-import numpy as np
-import torch
-from diffusers import StableDiffusionPipeline
+import requests
+from dotenv import load_dotenv
 
-router = APIRouter()
+load_dotenv()
+router = APIRouter(prefix="/generate-outfit-demo", tags=["AI Outfit Demo"])
 
-# Cargar modelo globalmente para no recargar en cada request
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-PIPELINE = StableDiffusionPipeline.from_pretrained(
-    "runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16 if DEVICE=="cuda" else torch.float32
-)
-PIPELINE = PIPELINE.to(DEVICE)
+# API keys
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-@router.post("/generate_outfit_demo")
+
+# -------------------------------
+# Gemini Outfit Generation
+# -------------------------------
+def generate_with_gemini(prompt: str, image_bytes: bytes):
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=GEMINI_API_KEY)
+
+        b64_img = base64.b64encode(image_bytes).decode()
+
+        model = genai.GenerativeModel("gemini-2.0-flash-exp")
+        result = model.generate_images(
+            prompt=prompt,
+            image={"mime_type": "image/jpeg", "data": b64_img},
+            size="1024x1024",
+        )
+
+        if not result or not result.images:
+            return None
+
+        return result.images[0].image_bytes
+
+    except Exception:
+        return None
+
+
+# -------------------------------
+# OpenAI Outfit Generation (fallback)
+# -------------------------------
+def generate_with_openai(prompt: str, image_bytes: bytes):
+    try:
+        url = "https://api.openai.com/v1/images/edits"
+
+        files = {"image": ("input.jpg", image_bytes, "image/jpeg")}
+        data = {
+            "model": "gpt-image-1",
+            "prompt": prompt,
+            "size": "1024x1024",
+        }
+        headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+
+        r = requests.post(url, files=files, data=data, headers=headers)
+
+        if r.status_code != 200:
+            return None
+
+        img_base64 = r.json()["data"][0]["b64_json"]
+        return base64.b64decode(img_base64)
+
+    except Exception:
+        return None
+
+
+# -------------------------------
+# Main Demo Endpoint
+# -------------------------------
+@router.post("/")
 async def generate_outfit_demo(payload: dict):
     """
-    Generate 3 demo outfits using provided user data (face + body measurements).
-    Returns: JSON with 3 base64 images.
+    Creates 3 outfit images using Gemini and OpenAI as fallback.
     """
     try:
-        measurements = payload.get("measurements")
         face_base64 = payload.get("face_base64")
-        gender = payload.get("gender", "unknown")
-        base_photo_url = payload.get("base_photo_url")
+        gender = payload.get("gender", "person")
 
-        if not measurements or not face_base64:
-            raise HTTPException(status_code=400, detail="Missing measurements or face image.")
+        if not face_base64:
+            raise HTTPException(status_code=400, detail="Missing face_base64")
 
-        # --- Convert face_base64 to PIL image ---
-        header, encoded = face_base64.split(",", 1)
-        face_img = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGB")
+        # Convert base64 → bytes
+        header, data = face_base64.split(",", 1)
+        img_bytes = base64.b64decode(data)
 
-        # --- Prompts para 3 outfits aleatorios ---
-        outfit_styles = ["casual", "elegant", "sporty"]
-        demo_images = []
+        outfit_styles = ["casual outfit", "elegant outfit", "sporty outfit"]
+        final_images = []
 
         for style in outfit_styles:
-            prompt = f"Full body portrait of a {gender} person, wearing {style} outfit, maintaining exact body measurements and face from reference image."
-            
-            # Generar imagen
-            with torch.autocast(DEVICE):
-                image = PIPELINE(prompt=prompt, init_image=face_img, strength=0.7, guidance_scale=7.5).images[0]
 
-            # Convertir a base64
-            buffered = io.BytesIO()
-            image.save(buffered, format="PNG")
-            b64_str = "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
-            demo_images.append(b64_str)
+            # English prompt (strict face preservation)
+            prompt = f"""
+            Generate a realistic full-body image of the same person in the reference image.
+            KEEP the exact same face, facial structure, proportions, and identity.
+            DO NOT modify the face, skin tone, eyes, nose, lips, hairline, or expression.
+            ONLY change the clothing.
+
+            Style requested: {style}.
+            """
+
+            # Try Gemini
+            gemini_img = generate_with_gemini(prompt, img_bytes)
+
+            if gemini_img:
+                final_images.append(
+                    "data:image/png;base64," + base64.b64encode(gemini_img).decode()
+                )
+                continue
+
+            # Fallback: OpenAI
+            openai_img = generate_with_openai(prompt, img_bytes)
+
+            if openai_img:
+                final_images.append(
+                    "data:image/png;base64," + base64.b64encode(openai_img).decode()
+                )
+                continue
+
+            # If both fail: empty image placeholder
+            final_images.append(
+                "data:image/png;base64," +
+                base64.b64encode(b"\x00" * (512 * 512 * 3)).decode()
+            )
 
         return JSONResponse({
             "status": "ok",
-            "demo_outfits": demo_images,
-            "generation_mode": "stable_diffusion",
-            "fallback_used": False
+            "generated_by": "gemini_or_openai",
+            "images": final_images
         })
 
-    except Exception as e:
-        print("❌ Error in /generate_outfit_demo:", traceback.format_exc())
-
-        # Fallback: devolver 3 imágenes genéricas vacías si falla
-        empty_b64 = "data:image/png;base64," + base64.b64encode(np.zeros((512,512,3), dtype=np.uint8).tobytes()).decode()
-        return JSONResponse({
-            "status": "ok",
-            "demo_outfits": [empty_b64]*3,
-            "generation_mode": "fallback",
-            "fallback_used": True,
-            "error": str(e)
-        })
+    except Exception:
+        print("❌ Error:", traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Internal server error")
