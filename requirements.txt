@@ -13,13 +13,13 @@ mediapipe==0.10.9
 Pillow==10.3.0
 tqdm==4.66.2
 
-# AI / ML (100% compatibles entre sí)
+# AI / ML COMPATIBLES PARA PYTHON 3.10 + Render
 torch==2.1.0+cpu
 --extra-index-url https://download.pytorch.org/whl/cpu
 
 diffusers==0.15.1
 transformers==4.36.2
-huggingface_hub==0.17.4
+huggingface_hub==0.16.4
 accelerate==0.24.1
 safetensors==0.4.3
 
