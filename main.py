@@ -4,8 +4,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Import services
-from services.gemini_service import init_gemini
-from services.openai_service import init_openai
+from utils.gemini_service import init_gemini
+from utils.openai_service import init_openai
+from utils.sd_service import init_sd
 
 # Routers
 from routers import analyze_body_with_face
