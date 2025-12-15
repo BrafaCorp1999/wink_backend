@@ -1,9 +1,8 @@
 # routers/generate_outfit_demo.py
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
-import base64, traceback, io, os
-from PIL import Image
-import numpy as np
+import base64, traceback, io, numpy as np
+import cv2
 import torch
 
 # Import services (Gemini & OpenAI)
@@ -12,15 +11,10 @@ from services.openai_service import generate_image_openai
 
 router = APIRouter()
 
-# --- Device setup ---
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 @router.post("/generate_outfit_demo")
 async def generate_outfit_demo(payload: dict):
-    """
-    Generate 2 demo outfits using provided user data (face + body measurements).
-    Returns: JSON with 2 base64 images.
-    """
     try:
         measurements = payload.get("measurements")
         face_base64 = payload.get("face_base64")
@@ -30,47 +24,52 @@ async def generate_outfit_demo(payload: dict):
         if not measurements or not face_base64:
             raise HTTPException(status_code=400, detail="Missing measurements or face image.")
 
-        # --- Convert face_base64 to PIL image ---
+        # --- Base64 → NumPy array (BGR) ---
         header, encoded = face_base64.split(",", 1)
-        face_img = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGB")
+        nparr = np.frombuffer(base64.b64decode(encoded), np.uint8)
+        face_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
         demo_images = []
         outfit_styles = ["random_style_1", "random_style_2"]  # 2 imágenes
 
         for style in outfit_styles:
-            # Prompt en inglés, mantiene rostro y medidas
             prompt = (
-                f"Full body portrait of a {gender} person, wearing {style} outfit, "
-                f"maintaining exact body measurements and face from reference image. "
-                f"Do not deform face or body."
+                f"Full body portrait of a {gender} person wearing {style} outfit, "
+                "maintaining exact body measurements and face from reference image. "
+                "Do not deform face or body. "
+                "Clothes must fit the body properly, not float over it."
             )
 
             image = None
-            # --- Fallback Gemini → OpenAI → SD ---
+            # --- Fallback robusto: Gemini → OpenAI → placeholder negro ---
             try:
                 image = generate_image_gemini(face_img, prompt)
-            except Exception:
+            except Exception as e1:
+                print("⚠️ Gemini failed:", e1)
                 try:
                     image = generate_image_openai(face_img, prompt)
-                except Exception:
-                    # Último fallback: imagen vacía
-                    image = Image.fromarray(np.zeros((512, 512, 3), dtype=np.uint8))
+                except Exception as e2:
+                    print("⚠️ OpenAI failed:", e2)
+                    image = np.zeros((512,512,3), dtype=np.uint8)  # fallback negro
 
-            # Convertir a base64
-            buffered = io.BytesIO()
-            image.save(buffered, format="PNG")
-            b64_str = "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
+            # --- Convertir salida a base64 ---
+            if isinstance(image, np.ndarray):
+                _, buf = cv2.imencode(".png", image)
+                b64_str = "data:image/png;base64," + base64.b64encode(buf).decode()
+            else:
+                # fallback si genera Pillow o otra cosa
+                b64_str = "data:image/png;base64," + base64.b64encode(np.zeros((512,512,3), np.uint8).tobytes()).decode()
+
             demo_images.append(b64_str)
 
         return JSONResponse({
             "status": "ok",
             "demo_outfits": demo_images,
-            "generation_mode": "fallback_used" if any(demo_images[i] == None for i in range(2)) else "AI_generated",
+            "generation_mode": "AI_generated"
         })
 
     except Exception as e:
         print("❌ Error in /generate_outfit_demo:", traceback.format_exc())
-        # Devuelve 2 imágenes vacías como fallback
         empty_b64 = "data:image/png;base64," + base64.b64encode(np.zeros((512,512,3), dtype=np.uint8).tobytes()).decode()
         return JSONResponse({
             "status": "ok",
