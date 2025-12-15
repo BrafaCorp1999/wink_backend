@@ -1,8 +1,8 @@
-# services/sd_service.py
-import base64
 import io
+import base64
 import torch
-from PIL import Image
+import numpy as np
+import cv2
 from diffusers import StableDiffusionPipeline
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -21,18 +21,20 @@ except Exception as e:
 
 
 async def sd_generate_image(prompt: str):
-    """Generate image using Stable Diffusion."""
     global sd
     if sd is None:
         return None
 
     try:
         with torch.autocast(DEVICE):
-            img = sd(prompt).images[0]
+            pil_img = sd(prompt).images[0]
 
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode()
+        # Convert PIL Image to NumPy array (BGR for OpenCV)
+        img = np.array(pil_img)[:, :, ::-1]  # RGB -> BGR
+
+        # Encode image as PNG with OpenCV
+        _, buf = cv2.imencode(".png", img)
+        b64 = base64.b64encode(buf.tobytes()).decode()
         return f"data:image/png;base64,{b64}"
 
     except Exception as e:
