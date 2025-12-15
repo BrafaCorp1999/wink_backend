@@ -1,6 +1,7 @@
+# routers/analyze_body_with_face.py
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
-import base64, json, traceback, numpy as np
+import base64, traceback, numpy as np
 import cv2
 
 # --- Try to load Mediapipe ---
@@ -26,7 +27,7 @@ async def analyze_body_with_face(
         if person_image.content_type not in ALLOWED_MIME:
             raise HTTPException(status_code=400, detail="Unsupported image type")
 
-        # --- Load image ---
+        # --- Load image with OpenCV ---
         np_img = np.frombuffer(user_bytes, np.uint8)
         img = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
         height, width = img.shape[:2]
@@ -53,13 +54,11 @@ async def analyze_body_with_face(
         # --- Body measurements using Mediapipe pose estimation ---
         body_data = {}
         if MEDIAPIPE_AVAILABLE:
-            import mediapipe as mp
             mp_pose = mp.solutions.pose
             pose = mp_pose.Pose(static_image_mode=True)
             results = pose.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
             if results.pose_landmarks:
                 landmarks = results.pose_landmarks.landmark
-                # Estimaciones simples basadas en imagen (demo)
                 body_data = {
                     "gender": gender_hint,
                     "body_shape": "average",
@@ -73,7 +72,7 @@ async def analyze_body_with_face(
                     "body_description": "Person has an average build and posture."
                 }
             else:
-                # Fallback si no se detecta pose
+                # fallback
                 body_data = {
                     "gender": gender_hint,
                     "body_shape": "average",
@@ -87,7 +86,6 @@ async def analyze_body_with_face(
                     "body_description": "Average build with unknown posture."
                 }
         else:
-            # Fallback si Mediapipe no está instalado
             body_data = {
                 "gender": gender_hint,
                 "body_shape": "average",
