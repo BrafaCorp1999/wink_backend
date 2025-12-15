@@ -1,7 +1,7 @@
+# routers/generate_outfit_demo.py
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 import base64, traceback, numpy as np
-import cv2
 
 # --- Import services ---
 from utils.gemini_service import gemini_generate_image
@@ -19,11 +19,6 @@ async def generate_outfit_demo(payload: dict):
         if not measurements or not face_base64:
             raise HTTPException(status_code=400, detail="Missing measurements or face image.")
 
-        # --- Base64 → NumPy array (BGR) ---
-        header, encoded = face_base64.split(",", 1)
-        nparr = np.frombuffer(base64.b64decode(encoded), np.uint8)
-        face_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
         demo_images = []
         outfit_styles = ["random_style_1", "random_style_2"]
 
@@ -34,15 +29,13 @@ async def generate_outfit_demo(payload: dict):
                 "Do not deform face or body. Clothes must fit the body properly."
             )
 
-            # --- Fallback: Gemini → OpenAI → placeholder negro ---
             image_b64 = None
             try:
                 gemini_result = await gemini_generate_image(prompt)
                 if gemini_result and "content" in gemini_result:
-                    # Gemini solo devuelve texto, pasamos a OpenAI
-                    image_b64 = await openai_generate_image(prompt)
+                    enriched_prompt = gemini_result["content"]
+                    image_b64 = await openai_generate_image(enriched_prompt)
                 else:
-                    # Si Gemini falla, fallback directo a OpenAI
                     image_b64 = await openai_generate_image(prompt)
             except Exception as e1:
                 print("⚠️ Gemini/OpenAI failed:", e1)
