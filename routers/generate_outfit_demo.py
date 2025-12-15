@@ -1,17 +1,14 @@
 # routers/generate_outfit_demo.py
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
-import base64, traceback, io, numpy as np
-import cv2
-import torch
+import traceback
 
-# Import services (Gemini & OpenAI)
+# Services
 from services.gemini_service import generate_image_gemini
 from services.openai_service import generate_image_openai
 
 router = APIRouter()
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 @router.post("/generate_outfit_demo")
 async def generate_outfit_demo(payload: dict):
@@ -19,61 +16,71 @@ async def generate_outfit_demo(payload: dict):
         measurements = payload.get("measurements")
         face_base64 = payload.get("face_base64")
         gender = payload.get("gender", "unknown")
-        base_photo_url = payload.get("base_photo_url")
 
         if not measurements or not face_base64:
-            raise HTTPException(status_code=400, detail="Missing measurements or face image.")
-
-        # --- Base64 → NumPy array (BGR) ---
-        header, encoded = face_base64.split(",", 1)
-        nparr = np.frombuffer(base64.b64decode(encoded), np.uint8)
-        face_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            raise HTTPException(
+                status_code=400,
+                detail="Missing measurements or face image"
+            )
 
         demo_images = []
-        outfit_styles = ["random_style_1", "random_style_2"]  # 2 imágenes
+        outfit_styles = ["casual outfit", "formal outfit"]
 
         for style in outfit_styles:
             prompt = (
-                f"Full body portrait of a {gender} person wearing {style} outfit, "
-                "maintaining exact body measurements and face from reference image. "
-                "Do not deform face or body. "
-                "Clothes must fit the body properly, not float over it."
+                f"Ultra realistic full body photo of a {gender} person wearing a {style}. "
+                "Keep body proportions realistic and natural. "
+                "Clothes must fit the body correctly, not floating. "
+                "Do not distort face or body. "
+                "High quality fashion photography."
             )
 
-            image = None
-            # --- Fallback robusto: Gemini → OpenAI → placeholder negro ---
-            try:
-                image = generate_image_gemini(face_img, prompt)
-            except Exception as e1:
-                print("⚠️ Gemini failed:", e1)
-                try:
-                    image = generate_image_openai(face_img, prompt)
-                except Exception as e2:
-                    print("⚠️ OpenAI failed:", e2)
-                    image = np.zeros((512,512,3), dtype=np.uint8)  # fallback negro
+            # 1️⃣ Gemini
+            image_b64 = await generate_image_gemini(prompt)
 
-            # --- Convertir salida a base64 ---
-            if isinstance(image, np.ndarray):
-                _, buf = cv2.imencode(".png", image)
-                b64_str = "data:image/png;base64," + base64.b64encode(buf).decode()
-            else:
-                # fallback si genera Pillow o otra cosa
-                b64_str = "data:image/png;base64," + base64.b64encode(np.zeros((512,512,3), np.uint8).tobytes()).decode()
+            # 2️⃣ OpenAI fallback
+            if not image_b64:
+                image_b64 = await generate_image_openai(prompt)
 
-            demo_images.append(b64_str)
+            # 3️⃣ Último fallback (imagen vacía válida)
+            if not image_b64:
+                image_b64 = (
+                    "data:image/png;base64,"
+                    "iVBORw0KGgoAAAANSUhEUgAAAgAAAAIACAIAAAB7GkOtAAAAA3NCSVQICAjb4U/gAAAB"
+                    "dUlEQVR42u3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                )
+
+            demo_images.append(image_b64)
 
         return JSONResponse({
             "status": "ok",
             "demo_outfits": demo_images,
-            "generation_mode": "AI_generated"
+            "generation_mode": "ai"
         })
 
     except Exception as e:
-        print("❌ Error in /generate_outfit_demo:", traceback.format_exc())
-        empty_b64 = "data:image/png;base64," + base64.b64encode(np.zeros((512,512,3), dtype=np.uint8).tobytes()).decode()
-        return JSONResponse({
-            "status": "ok",
-            "demo_outfits": [empty_b64]*2,
-            "generation_mode": "fallback",
-            "error": str(e)
-        })
+        print("❌ Error in /generate_outfit_demo")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
