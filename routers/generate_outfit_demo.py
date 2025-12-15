@@ -1,14 +1,13 @@
 # routers/generate_outfit_demo.py
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
-import traceback
+import base64, traceback, numpy as np, cv2
 
-# Services
-from services.gemini_service import generate_image_gemini
-from services.openai_service import generate_image_openai
+# Import desde utils (Gemini & OpenAI)
+from utils.gemini_service import generate_image_gemini
+from utils.openai_service import generate_image_openai
 
 router = APIRouter()
-
 
 @router.post("/generate_outfit_demo")
 async def generate_outfit_demo(payload: dict):
