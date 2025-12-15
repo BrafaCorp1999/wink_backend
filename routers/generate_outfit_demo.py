@@ -1,10 +1,9 @@
-# routers/generate_outfit_demo.py
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
-import base64, traceback, io, numpy as np
+import base64, traceback, numpy as np
 import cv2
 
-# --- Import services (Gemini & OpenAI) ---
+# --- Import services ---
 from utils.gemini_service import gemini_generate_image
 from utils.openai_service import openai_generate_image
 
@@ -16,7 +15,6 @@ async def generate_outfit_demo(payload: dict):
         measurements = payload.get("measurements")
         face_base64 = payload.get("face_base64")
         gender = payload.get("gender", "unknown")
-        base_photo_url = payload.get("base_photo_url")
 
         if not measurements or not face_base64:
             raise HTTPException(status_code=400, detail="Missing measurements or face image.")
@@ -27,39 +25,33 @@ async def generate_outfit_demo(payload: dict):
         face_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
         demo_images = []
-        outfit_styles = ["random_style_1", "random_style_2"]  # 2 imágenes
+        outfit_styles = ["random_style_1", "random_style_2"]
 
         for style in outfit_styles:
             prompt = (
                 f"Full body portrait of a {gender} person wearing {style} outfit, "
                 "maintaining exact body measurements and face from reference image. "
-                "Do not deform face or body. "
-                "Clothes must fit the body properly, not float over it."
+                "Do not deform face or body. Clothes must fit the body properly."
             )
 
-            image = None
-            # --- Fallback robusto: Gemini → OpenAI → placeholder negro ---
+            # --- Fallback: Gemini → OpenAI → placeholder negro ---
+            image_b64 = None
             try:
-                image = await gemini_generate_image(prompt)
+                gemini_result = await gemini_generate_image(prompt)
+                if gemini_result and "content" in gemini_result:
+                    # Gemini solo devuelve texto, pasamos a OpenAI
+                    image_b64 = await openai_generate_image(prompt)
+                else:
+                    # Si Gemini falla, fallback directo a OpenAI
+                    image_b64 = await openai_generate_image(prompt)
             except Exception as e1:
-                print("⚠️ Gemini failed:", e1)
-                try:
-                    image = await openai_generate_image(prompt)
-                except Exception as e2:
-                    print("⚠️ OpenAI failed:", e2)
-                    image = np.zeros((512,512,3), dtype=np.uint8)  # fallback negro
-
-            # --- Convertir salida a base64 ---
-            if isinstance(image, np.ndarray):
-                _, buf = cv2.imencode(".png", image)
-                b64_str = "data:image/png;base64," + base64.b64encode(buf).decode()
-            else:
-                # fallback si genera otro tipo
-                b64_str = "data:image/png;base64," + base64.b64encode(
+                print("⚠️ Gemini/OpenAI failed:", e1)
+                # fallback negro
+                image_b64 = "data:image/png;base64," + base64.b64encode(
                     np.zeros((512,512,3), dtype=np.uint8).tobytes()
                 ).decode()
 
-            demo_images.append(b64_str)
+            demo_images.append(image_b64)
 
         return JSONResponse({
             "status": "ok",
