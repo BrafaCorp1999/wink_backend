@@ -3,11 +3,11 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Import services
+# --- Services ---
 from utils.gemini_service import init_gemini
 from utils.openai_service import init_openai
 
-# Routers
+# --- Routers ---
 from routers import analyze_body_with_face
 from routers import generate_outfit_demo
 
@@ -17,7 +17,7 @@ app = FastAPI(
     description="Backend for body analysis + outfit generation using Gemini + OpenAI."
 )
 
-# === Initialize external AI services ===
+# === Initialize AI services ===
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -33,7 +33,7 @@ if OPENAI_KEY:
 else:
     print("⚠️ OPENAI_API_KEY missing → OpenAI disabled")
 
-# === CORS ===
+# === CORS Middleware ===
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,7 +42,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# === Register routes ===
+# === Register Routers ===
 app.include_router(analyze_body_with_face.router, prefix="/api")
 app.include_router(generate_outfit_demo.router, prefix="/api")
 
