@@ -3,8 +3,9 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 import base64, traceback, numpy as np
 
+# --- Import services ---
 from utils.openai_service import openai_generate_image
-from utils.replicate_service import replicate_generate_image  # nueva
+from utils.replicate_service import replicate_generate_image
 
 router = APIRouter()
 
@@ -19,7 +20,7 @@ async def generate_outfit_demo(payload: dict):
             raise HTTPException(status_code=400, detail="Missing measurements or face image.")
 
         demo_images = []
-        outfit_styles = ["random_style_1", "random_style_2"]
+        outfit_styles = ["random_style_1", "random_style_2"]  # puedes agregar más estilos
 
         for style in outfit_styles:
             prompt = (
@@ -30,28 +31,18 @@ async def generate_outfit_demo(payload: dict):
 
             image_b64 = None
 
-            # 1️⃣ OpenAI DALL·E
+            # 1️⃣ Intenta OpenAI DALL·E
             try:
                 image_b64 = await openai_generate_image(prompt, size="512x512")
             except Exception as e:
-                print(f"⚠️ OpenAI fail for style {style}: {e}")
-                image_b64 = None
+                print("⚠️ OpenAI image error:", e)
 
-            # 2️⃣ Replicate fallback (Stable Diffusion)
+            # 2️⃣ Si OpenAI falla, intenta Replicate
             if not image_b64:
                 try:
-                    # replicate returns a URL -- descarga y conviértela a base64
-                    image_url = await replicate_generate_image(prompt, width=512, height=512)
-                    if image_url:
-                        # descarga bytes
-                        import requests
-                        resp = requests.get(image_url)
-                        if resp.status_code == 200:
-                            image_bytes = resp.content
-                            image_b64 = "data:image/png;base64," + base64.b64encode(image_bytes).decode()
+                    image_b64 = await replicate_generate_image(prompt, width=512, height=512)
                 except Exception as e:
-                    print(f"⚠️ Replicate fail for style {style}: {e}")
-                    image_b64 = None
+                    print("⚠️ Replicate image error:", e)
 
             # 3️⃣ Fallback seguro (imagen negra)
             if not image_b64:
@@ -68,7 +59,7 @@ async def generate_outfit_demo(payload: dict):
         })
 
     except Exception as e:
-        print("❌ Error in generate_outfit_demo:", traceback.format_exc())
+        print("❌ Error in /generate_outfit_demo:", traceback.format_exc())
         empty_b64 = "data:image/png;base64," + base64.b64encode(
             np.zeros((512,512,3), dtype=np.uint8).tobytes()
         ).decode()
