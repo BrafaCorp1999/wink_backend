@@ -14,7 +14,7 @@ from routers import generate_outfit_demo
 app = FastAPI(
     title="AI Outfit Backend",
     version="1.0",
-    description="Backend for body analysis + outfit generation using Gemini + OpenAI."
+    description="Backend for body analysis + outfit generation using Gemini + Replicate."
 )
 
 # === Initialize AI services ===
@@ -33,6 +33,11 @@ if OPENAI_KEY:
     init_openai(OPENAI_KEY)
 else:
     print("⚠️ OPENAI_API_KEY missing → OpenAI disabled")
+
+if REPLICATE_API_KEY:
+    print("🔹 Replicate API detected → Ready")
+else:
+    print("⚠️ REPLICATE_API_KEY missing → Replicate disabled")
 
 # === CORS Middleware ===
 app.add_middleware(
