@@ -1,27 +1,26 @@
+# routers/generate_outfit_demo.py
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
+import traceback
+
+# 🔹 Aquí se define el router
+router = APIRouter()
+
 @router.post("/generate_outfit_demo")
 async def generate_outfit_demo(payload: dict):
     try:
         gender = payload.get("gender", "unknown")
 
-        # Prompt simplificado
+        # Prompt simplificado para demo
         prompt = f"A simple outfit for a {gender} person. Neutral pose, plain background."
 
-        image_b64 = None
-
-        # OpenAI
-        try:
-            image_b64 = await openai_generate_image(prompt)
-            print("✅ OpenAI generated image")
-        except Exception as e_openai:
-            print(f"⚠️ OpenAI failed: {e_openai}")
-            try:
-                image_b64 = await replicate_generate_image(prompt)
-                print("✅ Replicate generated image")
-            except Exception as e_replicate:
-                print(f"⚠️ Replicate also failed: {e_replicate}")
-
-        if not image_b64:
-            raise HTTPException(status_code=500, detail="AI generation failed")
+        # 🔹 Aquí iría tu llamada a OpenAI/Replicate
+        # Para demo, devolvemos un PNG negro como placeholder
+        import base64
+        import numpy as np
+        image_b64 = "data:image/png;base64," + base64.b64encode(
+            np.zeros((256, 256, 3), dtype=np.uint8).tobytes()
+        ).decode()
 
         return JSONResponse({
             "status": "ok",
@@ -30,7 +29,7 @@ async def generate_outfit_demo(payload: dict):
         })
 
     except Exception as e:
-        print("❌ Unexpected error in /generate_outfit_demo:", traceback.format_exc())
+        print("❌ Unexpected error:", traceback.format_exc())
         return JSONResponse({
             "status": "error",
             "message": str(e)
