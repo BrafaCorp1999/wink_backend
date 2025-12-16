@@ -1,87 +1,97 @@
-# generate_outfit_demo.py
-from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+# routers/generate_outfit_demo.py
 import os
+import io
 import base64
 import logging
 import requests
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
-import replicate
 import openai
+import replicate
 
 router = APIRouter()
 
+# Inicializar llaves de entorno
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 REPLICATE_API_KEY = os.getenv("REPLICATE_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-if OPENAI_API_KEY:
-    openai.api_key = OPENAI_API_KEY
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Endpoint para generar outfits
+# Configurar APIs
+if OPENAI_KEY:
+    openai.api_key = OPENAI_KEY
+    logger.info("🔹 OpenAI API Key detected")
+else:
+    logger.warning("⚠️ OPENAI_API_KEY missing → OpenAI disabled")
+
+if REPLICATE_API_KEY:
+    os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_KEY
+    logger.info("🔹 Replicate API Key detected")
+else:
+    logger.warning("⚠️ REPLICATE_API_KEY missing → Replicate disabled")
+
 @router.post("/generate_outfit_demo")
 async def generate_outfit_demo(payload: dict):
     gender = payload.get("gender", "unknown")
-    images_b64 = []
+    outfits_b64 = []
 
     # -------------------------
-    # 1️⃣ Intentar generar con OpenAI (DALL·E)
+    # 1️⃣ Intentar OpenAI
     # -------------------------
-    if OPENAI_API_KEY:
+    if OPENAI_KEY:
         try:
-            logging.info("➡️ Intentando generar imagen con OpenAI DALL·E...")
+            logger.info("➡️ Generating image with OpenAI")
             response = openai.images.generate(
                 model="gpt-image-1",
                 prompt=f"A full-body outfit for a {gender} person, realistic, natural pose.",
                 size="512x768",
                 n=1
             )
-            for data in response.data:
-                img_b64 = data.b64_json
-                images_b64.append("data:image/png;base64," + img_b64)
-            logging.info(f"✅ OpenAI generó {len(images_b64)} imágenes")
+            if "data" in response and len(response["data"]) > 0:
+                url = response["data"][0]["url"]
+                r = requests.get(url)
+                if r.status_code == 200:
+                    outfits_b64.append("data:image/png;base64," + base64.b64encode(r.content).decode("utf-8"))
+                    logger.info("✅ OpenAI image generated")
         except Exception as e:
-            logging.warning(f"⚠️ Error OpenAI: {e}")
+            logger.warning(f"⚠️ Error OpenAI: {e}")
 
     # -------------------------
-    # 2️⃣ Intentar generar con Replicate
+    # 2️⃣ Intentar Replicate
     # -------------------------
     if REPLICATE_API_KEY:
         try:
-            logging.info("➡️ Intentando generar imagen con Replicate...")
-            client = replicate.Client(api_token=REPLICATE_API_KEY)
-            model = client.models.get("stability-ai/stable-diffusion")
-            output = model.predict(
-                prompt=f"A full-body outfit for a {gender} person, realistic, natural pose.",
-                width=512, height=768
+            logger.info("➡️ Generating image with Replicate")
+            output_urls = replicate.run(
+                "stability-ai/stable-diffusion:latest",
+                input={
+                    "prompt": f"A full-body outfit for a {gender} person, realistic, natural pose.",
+                    "width": 512,
+                    "height": 768
+                }
             )
-            for url in output:
-                resp = requests.get(url)
-                if resp.status_code == 200:
-                    images_b64.append("data:image/png;base64," + base64.b64encode(resp.content).decode("utf-8"))
-                else:
-                    logging.warning(f"⚠️ Failed to download Replicate image from {url}")
-            logging.info(f"✅ Replicate generó {len(output)} imágenes")
+            for url in output_urls:
+                r = requests.get(url)
+                if r.status_code == 200:
+                    outfits_b64.append("data:image/png;base64," + base64.b64encode(r.content).decode("utf-8"))
+            logger.info("✅ Replicate images generated")
         except Exception as e:
-            logging.warning(f"⚠️ Error Replicate: {e}")
+            logger.warning(f"⚠️ Error Replicate: {e}")
 
     # -------------------------
     # 3️⃣ Fallback local
     # -------------------------
-    if not images_b64:
-        logging.warning("⚠️ Ninguna IA generó imágenes, usando fallback local...")
+    if not outfits_b64:
+        fallback_path = "./demo_outfit_fallback.png"
         try:
-            fallback_path = "assets/demo_outfit_fallback.png"  # Debe estar en Flutter assets
             with open(fallback_path, "rb") as f:
-                images_b64.append("data:image/png;base64," + base64.b64encode(f.read()).decode("utf-8"))
-            logging.info("✅ Fallback local cargado correctamente")
+                outfits_b64.append("data:image/png;base64," + base64.b64encode(f.read()).decode("utf-8"))
+            logger.warning("⚠️ Using local fallback image")
         except Exception as e:
-            logging.error(f"❌ Falló fallback local: {e}")
-            return JSONResponse({
-                "status": "error",
-                "message": "No se pudo generar ninguna imagen. Revisa los logs."
-            })
+            logger.error(f"❌ Falló fallback local: {e}")
+            return JSONResponse({"status": "error", "message": "No se pudo generar ninguna imagen. Revisa los logs."})
 
-    return JSONResponse({
-        "status": "ok",
-        "demo_outfits": images_b64
-    })
+    return JSONResponse({"status": "ok", "demo_outfits": outfits_b64})
