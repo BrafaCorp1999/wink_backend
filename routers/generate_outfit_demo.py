@@ -23,37 +23,46 @@ async def generate_outfit_demo(payload: dict):
         outfit_styles = ["random_style_1", "random_style_2"]
 
         for style in outfit_styles:
-    prompt = (
-        f"Full body portrait of a {gender} person wearing {style} outfit, "
-        "maintaining exact body measurements and face from reference image. "
-        "Do not deform face or body. Clothes must fit the body properly."
-    )
+            prompt = (
+                f"Full body portrait of a {gender} person wearing {style} outfit, "
+                "maintaining exact body measurements and face from reference image. "
+                "Do not deform face or body. Clothes must fit the body properly."
+            )
 
-    image_b64 = None
+            image_b64 = None
 
-    try:
-        gemini_result = await gemini_generate_image(prompt)
+            try:
+                # 1️⃣ Intentar Gemini
+                gemini_result = await gemini_generate_image(prompt)
+                if gemini_result and isinstance(gemini_result, dict):
+                    enriched_prompt = gemini_result.get("content", prompt)
+                else:
+                    enriched_prompt = prompt
 
-        if gemini_result and isinstance(gemini_result, dict):
-            enriched_prompt = gemini_result.get("content", prompt)
-        else:
-            enriched_prompt = prompt
+                if enriched_prompt:
+                    image_b64 = await gemini_generate_image(enriched_prompt)
+                    if image_b64 and isinstance(image_b64, str):
+                        print(f"✅ Gemini generó imagen para style: {style}")
+                    else:
+                        image_b64 = None  # forzar fallback a OpenAI
 
-        image_b64 = await openai_generate_image(enriched_prompt)
+                # 2️⃣ Si Gemini falla, usar OpenAI
+                if not image_b64:
+                    print(f"⚠️ Gemini falló, intentando OpenAI para style: {style}")
+                    image_b64 = await openai_generate_image(enriched_prompt)
+                    if image_b64 and isinstance(image_b64, str):
+                        print(f"✅ OpenAI generó imagen para style: {style}")
+                    else:
+                        raise ValueError("OpenAI returned empty image")
 
-        # 🔴 VALIDACIÓN CRÍTICA
-        if not image_b64 or not isinstance(image_b64, str):
-            raise ValueError("OpenAI returned empty image")
+            except Exception as e:
+                print(f"⚠️ Ambos servicios fallaron para style {style}: {e}")
+                # fallback real
+                image_b64 = "data:image/png;base64," + base64.b64encode(
+                    np.zeros((512, 512, 3), dtype=np.uint8).tobytes()
+                ).decode()
 
-    except Exception as e:
-        print("⚠️ IMAGE GENERATION FAILED:", e)
-
-        # ✅ FALLBACK REAL (imagen negra válida)
-        image_b64 = "data:image/png;base64," + base64.b64encode(
-            np.zeros((512, 512, 3), dtype=np.uint8).tobytes()
-        ).decode()
-
-    demo_images.append(image_b64)
+            demo_images.append(image_b64)
 
         return JSONResponse({
             "status": "ok",
