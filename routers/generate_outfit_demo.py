@@ -3,23 +3,20 @@ async def generate_outfit_demo(payload: dict):
     try:
         gender = payload.get("gender", "unknown")
 
-        prompt = f"Full body portrait of a {gender} person wearing a simple outfit. Neutral pose, no face distortion."
+        # Prompt simplificado
+        prompt = f"A simple outfit for a {gender} person. Neutral pose, plain background."
 
         image_b64 = None
 
-        # 1️⃣ Intentar OpenAI
+        # OpenAI
         try:
-            print(f"➡️ Generating outfit with OpenAI")
             image_b64 = await openai_generate_image(prompt)
-            print(f"✅ OpenAI generated image")
-
-        # 2️⃣ Si falla OpenAI, intentar Replicate
+            print("✅ OpenAI generated image")
         except Exception as e_openai:
             print(f"⚠️ OpenAI failed: {e_openai}")
             try:
-                print(f"➡️ Trying Replicate")
                 image_b64 = await replicate_generate_image(prompt)
-                print(f"✅ Replicate generated image")
+                print("✅ Replicate generated image")
             except Exception as e_replicate:
                 print(f"⚠️ Replicate also failed: {e_replicate}")
 
