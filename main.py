@@ -20,6 +20,7 @@ app = FastAPI(
 # === Initialize AI services ===
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+REPLICATE_API_KEY = os.getenv("REPLICATE_API_KEY")
 
 if GEMINI_KEY:
     print("🔹 Gemini API detected → Initializing...")
