@@ -8,14 +8,16 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 import replicate
-from google import genai      # SDK de Gemini v1
-from google.genai import types
+import google.generativeai as genai  # SDK de Gemini v1
+from google.generativeai import types
 
 router = APIRouter()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("generate_outfit_demo")
 
-# Cargar llaves
+# =========================
+# Cargar llaves de entorno
+# =========================
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 REPLICATE_API_KEY = os.getenv("REPLICATE_API_KEY")
 
@@ -24,64 +26,77 @@ if not GEMINI_API_KEY:
 if not REPLICATE_API_KEY:
     logger.warning("⚠️ REPLICATE_API_KEY not set — Replicate disabled")
 
-# Inicializar cliente Gemini (Google genai)
+# =========================
+# Inicializar cliente Gemini
+# =========================
 gemini_client = None
 if GEMINI_API_KEY:
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    logger.info("🔹 Gemini client initialized")
 
+# =========================
+# Endpoint principal
+# =========================
 @router.post("/generate_outfit_demo")
 async def generate_outfit_demo(payload: dict):
     gender = payload.get("gender", "unknown")
-    prompt = f"A full-body outfit for a {gender} person, realistic, natural pose."
+    outfits_b64 = []
 
-    images_b64 = []
-
-    # --- 1️⃣ Gemini API (si disponible) ---
+    # -------------------------
+    # 1️⃣ Generar con Gemini
+    # -------------------------
     if gemini_client:
         try:
-            logger.info("➡️ Generating with Gemini")
-            response = gemini_client.models.generate_content(
-                model="imagen-3.0-generate-002",  # modelo actual disponible
-                input=types.GenerateContentRequest(
-                    prompt=prompt,
-                    response_modalities=["Image"],
-                ),
+            logger.info("➡️ Generating image with Gemini")
+            response = gemini_client.generate_image(
+                model="image-alpha-001",
+                prompt=f"A full-body outfit for a {gender} person, realistic, natural pose.",
+                size="512x768"
             )
-            # iterar imágenes generadas
-            for img_obj in response.images:
-                # cada imagen tiene .data (bytes)
-                img_bytes = img_obj.data
-                images_b64.append(
-                    "data:image/png;base64," + base64.b64encode(img_bytes).decode("utf-8")
-                )
-            logger.info("✅ Gemini generated images")
+            image_bytes = requests.get(response.url).content
+            outfits_b64.append("data:image/png;base64," + base64.b64encode(image_bytes).decode("utf-8"))
+            logger.info("✅ Gemini image generated")
         except Exception as e:
-            logger.warning(f"⚠️ Gemini failed: {e}")
+            logger.warning(f"⚠️ Error Gemini: {e}")
 
-    # --- 2️⃣ Replicate ---
+    # -------------------------
+    # 2️⃣ Generar con Replicate
+    # -------------------------
     if REPLICATE_API_KEY:
+        os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_KEY
         try:
-            logger.info("➡️ Generating with Replicate")
+            logger.info("➡️ Generating image with Replicate")
             output_urls = replicate.run(
-                "stability-ai/stable-diffusion-3",
-                input={"prompt": prompt, "width": 512, "height": 768}
+                "stability-ai/stable-diffusion:latest",
+                input={
+                    "prompt": f"A full-body outfit for a {gender} person, realistic, natural pose.",
+                    "width": 512,
+                    "height": 768
+                }
             )
-            for url in output_urls:
-                resp = requests.get(url)
-                if resp.status_code == 200:
-                    images_b64.append(
-                        "data:image/png;base64," + base64.b64encode(resp.content).decode("utf-8")
-                    )
-            logger.info("✅ Replicate generated images")
+            if isinstance(output_urls, list):
+                for url in output_urls:
+                    r = requests.get(url)
+                    if r.status_code == 200:
+                        outfits_b64.append("data:image/png;base64," + base64.b64encode(r.content).decode("utf-8"))
+                logger.info("✅ Replicate images generated")
         except Exception as e:
-            logger.warning(f"⚠️ Replicate failed: {e}")
+            logger.warning(f"⚠️ Error Replicate: {e}")
 
-    # --- 3️⃣ Si ninguna generó ---
-    if not images_b64:
-        logger.error("❌ Neither Gemini nor Replicate produced images")
-        return JSONResponse({
-            "status": "error",
-            "message": "No images generated. Check logs for details"
-        }, status_code=200)
+    # -------------------------
+    # 3️⃣ Fallback local
+    # -------------------------
+    if not outfits_b64:
+        fallback_path = "./demo_outfit_fallback.png"
+        try:
+            with open(fallback_path, "rb") as f:
+                outfits_b64.append("data:image/png;base64," + base64.b64encode(f.read()).decode("utf-8"))
+            logger.warning("⚠️ Using local fallback image")
+        except Exception as e:
+            logger.error(f"❌ Falló fallback local: {e}")
+            return JSONResponse({
+                "status": "error",
+                "message": "No se pudo generar ninguna imagen. Revisa los logs."
+            })
 
-    return JSONResponse({"status": "ok", "demo_outfits": images_b64})
+    return JSONResponse({"status": "ok", "demo_outfits": outfits_b64})
