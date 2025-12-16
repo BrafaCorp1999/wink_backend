@@ -1,73 +1,59 @@
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
-import httpx
-import os
-from io import BytesIO
-from PIL import Image
+from fastapi.responses import StreamingResponse, JSONResponse
+import io
+import requests
 
 router = APIRouter()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-REPLICATE_API_KEY = os.getenv("REPLICATE_API_KEY")
+# 🔹 Simulación de integración de dos IA's
+#   DALL·E + Replicate
+#   Aquí reemplazarías los "requests.get" con tus llamadas a la API real
 
 @router.post("/generate_outfit_demo")
 async def generate_outfit_demo(payload: dict):
     gender = payload.get("gender", "unknown")
-    measurements = payload.get("measurements")
-    face_base64 = payload.get("face_base64")
 
-    if not measurements or not face_base64:
-        raise HTTPException(status_code=400, detail="Missing measurements or face image.")
-
-    # 🔹 Prompt para la IA
-    prompt = (
-        f"Genera un outfit moderno para una persona {gender}, "
-        "manteniendo sus rasgos faciales y proporciones exactas del cuerpo según la imagen de referencia. "
-        "No deformar la cara ni cambiar postura. Fondo neutro, estilo de fotografía realista."
-    )
-
-    # Convertir base64 de la cara a bytes
     try:
-        face_bytes = BytesIO()
-        face_bytes.write(base64.b64decode(face_base64.split(",")[1]))
-        face_bytes.seek(0)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid face image base64.")
+        # -------------------------
+        # 1️⃣ DALL·E: generar imagen
+        # -------------------------
+        dalle_prompt = f"Generate a full-body outfit for a {gender} person. Maintain face features and posture."
+        # 🔹 Ejemplo de placeholder: reemplazar por llamada real a DALL·E
+        dalle_url = f"https://via.placeholder.com/512x768.png?text=DALL-E+{gender}"
+        dalle_resp = requests.get(dalle_url)
+        if dalle_resp.status_code != 200:
+            raise HTTPException(status_code=500, detail="Error generando imagen DALL·E")
+        dalle_bytes = dalle_resp.content
 
-    # 🔹 Intentar con OpenAI
-    try:
-        import openai
-        openai.api_key = OPENAI_API_KEY
+        # -------------------------
+        # 2️⃣ Replicate: generar otra imagen
+        # -------------------------
+        replicate_prompt = f"Generate a realistic outfit for a {gender} person. Keep user's facial features."
+        # 🔹 Ejemplo de placeholder: reemplazar por llamada real a Replicate
+        replicate_url = f"https://via.placeholder.com/512x768.png?text=Replicate+{gender}"
+        replicate_resp = requests.get(replicate_url)
+        if replicate_resp.status_code != 200:
+            raise HTTPException(status_code=500, detail="Error generando imagen Replicate")
+        replicate_bytes = replicate_resp.content
 
-        result = openai.images.generate(
-            model="gpt-image-1",
-            prompt=prompt,
-            size="1024x1024",
-            image=face_bytes  # referencia de la cara
-        )
+        # -------------------------
+        # Enviar como JSON base64 (opcional) o enviar bytes individuales
+        # Para Flutter: preferible enviar lista de bytes codificados como base64 corto
+        # Alternativa: crear endpoint /image/1 y /image/2 para GET directo
+        # Aquí usamos base64 para simplificar la integración Flutter
+        import base64
+        images_b64 = [
+            "data:image/png;base64," + base64.b64encode(dalle_bytes).decode("utf-8"),
+            "data:image/png;base64," + base64.b64encode(replicate_bytes).decode("utf-8"),
+        ]
 
-        img_data = result.data[0].b64_json
-        img_bytes = BytesIO(base64.b64decode(img_data)).read()
-        return Response(content=img_bytes, media_type="image/png")
+        return JSONResponse({
+            "status": "ok",
+            "demo_outfits": images_b64
+        })
 
-    except Exception as e_openai:
-        # 🔹 Fallback Replicate
-        try:
-            headers = {"Authorization": f"Token {REPLICATE_API_KEY}"}
-            json_payload = {"prompt": prompt, "image": face_bytes.read(), "size": "1024x1024"}
-            async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post("https://api.replicate.com/v1/predictions", headers=headers, json=json_payload)
-                resp.raise_for_status()
-                data = resp.json()
-                # Aquí se asume que la respuesta devuelve URL o base64
-                replicate_img_url = data["output"][0]
-                # Descargar la imagen
-                img_resp = await client.get(replicate_img_url)
-                img_resp.raise_for_status()
-                return Response(content=img_resp.content, media_type="image/png")
-
-        except Exception as e_repl:
-            raise HTTPException(
-                status_code=500,
-                detail=f"AI generation failed: OpenAI error: {str(e_openai)}, Replicate error: {str(e_repl)}"
-            )
+    except Exception as e:
+        return JSONResponse({
+            "status": "error",
+            "message": str(e)
+        })
