@@ -1,101 +1,75 @@
 import os
 import time
 import base64
-import logging
-from fastapi import APIRouter
+import requests
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
-import httpx
 
 router = APIRouter()
-logger = logging.getLogger("generate_outfit_demo")
-logging.basicConfig(level=logging.INFO)
 
-# Variables de entorno
-CLOUDFLARE_AI_TOKEN = os.getenv("CLOUDFLARE_AI_TOKEN")  # Token de Cloudflare Workers AI
-STABLE_HORDE_KEY = os.getenv("STABLE_HORDE_KEY", "0000000000")  # Key de Horde
+NANOBANANA_API_KEY = os.getenv("NANOBANANA_API_KEY")
+NANOBANANA_URL = "https://api.nanobananaapi.ai/api/v1/nanobanana/generate"
 
-def build_prompt(gender: str) -> str:
-    return (
-        f"High‑quality realistic full body outfit for a {gender} person, "
-        "keeping the face and proportions natural without distortion."
-    )
-
-@router.post("/generate_outfit_demo")
+@router.post("/api/generate_outfit_demo")
 async def generate_outfit_demo(payload: dict):
-    gender = payload.get("gender", "person")
-    prompt = build_prompt(gender)
+    if not NANOBANANA_API_KEY:
+        raise HTTPException(status_code=500, detail="Nano Banana API key no configurada")
 
-    #########################################
-    # 1️⃣ Intentar Cloudflare Workers AI
-    #########################################
-    if CLOUDFLARE_AI_TOKEN:
-        try:
-            logger.info("➡️ Trying Cloudflare Workers AI generation")
+    gender = payload.get("gender", "female")
 
-            cf_url = f"https://api.cloudflare.com/client/v4/accounts/{{YOUR_ACCOUNT_ID}}/ai/run/@cf/stabilityai/stable-diffusion-xl-base-1.0"
-            async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post(
-                    cf_url,
-                    headers={
-                        "Authorization": f"Bearer {CLOUDFLARE_AI_TOKEN}",
-                        "Content-Type": "application/json"
-                    },
-                    json={"prompt": prompt}
-                )
+    # Prompt CLAVE: realismo + preservación facial
+    prompt = f"""
+    Ultra-realistic full-body photo of a {gender} person wearing a modern, stylish outfit.
+    Preserve original facial identity, facial proportions and skin tone.
+    Natural human face, realistic anatomy, real fabric textures.
+    Studio lighting, DSLR photo, sharp focus.
+    No cartoon, no animation, no CGI, no game style, no distortion.
+    """
 
-            # Si éxito y image base64 viene en el JSON
-            if resp.status_code == 200:
-                result = resp.json()
-                image_b64 = result.get("image_base64")
-                if image_b64:
-                    logger.info("✅ Cloudflare AI success")
-                    return JSONResponse({"status": "ok", "image": image_b64})
-        except Exception as e:
-            logger.warning(f"⚠️ Cloudflare AI failed: {e}")
+    headers = {
+        "Authorization": f"Bearer {NANOBANANA_API_KEY}",
+        "Content-Type": "application/json",
+    }
 
-    #########################################
-    # 2️⃣ Intentar Stable Horde (polling)
-    #########################################
-    try:
-        logger.info("➡️ Trying Stable Horde generation (async)")
+    body = {
+        "prompt": prompt.strip(),
+        "numImages": 1,
+        "type": "TEXTTOIAMGE",
+        # Resolución equilibrada (realista + bajo consumo)
+        "image_size": "3:4",
+    }
 
-        # 1) Enviar job
-        async with httpx.AsyncClient(timeout=120) as client:
-            submit_resp = await client.post(
-                "https://stablehorde.net/api/v2/generate/async",
-                headers={"apikey": STABLE_HORDE_KEY},
-                json={"prompt": prompt, "params": {"steps": 25, "width": 512, "height": 768}}
+    # 1️⃣ Crear tarea
+    response = requests.post(NANOBANANA_URL, json=body, headers=headers, timeout=60)
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Nano Banana no respondió")
+
+    data = response.json()
+    task_id = data.get("data", {}).get("taskId")
+    if not task_id:
+        raise HTTPException(status_code=500, detail="No se recibió taskId")
+
+    # 2️⃣ Polling simple (bloqueante pero suficiente para demo)
+    result_url = f"https://api.nanobananaapi.ai/api/v1/nanobanana/result/{task_id}"
+
+    for _ in range(20):  # hasta ~40–60s
+        time.sleep(2)
+        result = requests.get(result_url, headers=headers).json()
+
+        if result.get("data", {}).get("status") == "SUCCESS":
+            image_url = result["data"]["images"][0]
+
+            image_bytes = requests.get(image_url).content
+            image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+
+            return JSONResponse(
+                {
+                    "status": "ok",
+                    "image": image_base64,
+                }
             )
 
-        if submit_resp.status_code == 202:
-            job = submit_resp.json().get("id")
-            logger.info(f"  Job ID: {job}")
+        if result.get("data", {}).get("status") == "FAILED":
+            break
 
-            # 2) Hacer polling hasta que esté listo
-            async with httpx.AsyncClient(timeout=120) as client:
-                for _ in range(30):  # hasta ~30 polls (≈30‑40s)
-                    status_resp = await client.get(
-                        f"https://stablehorde.net/api/v2/generate/check/{job}"
-                    )
-                    status_json = status_resp.json()
-
-                    if status_json.get("done") == 1:
-                        gens = status_json.get("generations", [])
-                        if gens:
-                            img_b64 = gens[0].get("img")
-                            if img_b64:
-                                logger.info("✅ Stable Horde image ready")
-                                return JSONResponse({"status": "ok", "image": img_b64})
-                    # esperar antes de intentar de nuevo
-                    time.sleep(2)
-
-    except Exception as e:
-        logger.warning(f"⚠️ Stable Horde polling failed: {e}")
-
-    #########################################
-    # 3️⃣ Si todo falla
-    #########################################
-    return JSONResponse(
-        {"status": "error", "message": "No se pudo generar imagen con servicios gratuitos."},
-        status_code=500
-    )
+    raise HTTPException(status_code=500, detail="Timeout generando imagen")
