@@ -1,148 +1,93 @@
+# routers/generate_outfit_demo.py
 import os
 import base64
 import logging
-import requests
-
-from fastapi import APIRouter, HTTPException
+import json
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+import httpx
 
 import replicate
 
+logger = logging.getLogger("generate_outfit_demo")
+logging.basicConfig(level=logging.INFO)
+
 router = APIRouter()
 
-# =========================
-# Logging
-# =========================
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("generate_outfit_demo")
-
-# =========================
-# Environment variables
-# =========================
-HF_API_TOKEN = os.getenv("HF_API_TOKEN")
+HF_API_TOKEN = os.getenv("HF_API_TOKEN")  # Hugging Face token
 REPLICATE_API_KEY = os.getenv("REPLICATE_API_KEY")
-
-if not HF_API_TOKEN:
-    logger.warning("⚠️ HF_API_TOKEN missing → Hugging Face disabled")
-
 if REPLICATE_API_KEY:
     os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_KEY
-else:
-    logger.warning("⚠️ REPLICATE_API_KEY missing → Replicate disabled")
 
-# =========================
-# Hugging Face config
-# =========================
-HF_MODEL_URL = (
-    "https://router.huggingface.co/hf-inference/models/"
-    "stabilityai/stable-diffusion-xl-base-1.0"
-)
-
-HF_HEADERS = {
-    "Authorization": f"Bearer {HF_API_TOKEN}",
-    "Content-Type": "application/json",
-}
-
-# =========================
-# Endpoint
-# =========================
 @router.post("/generate_outfit_demo")
-async def generate_outfit_demo(payload: dict):
-    gender = payload.get("gender", "person")
+async def generate_outfit_demo(request: Request):
+    """
+    Genera outfit IA usando Hugging Face (principal) y Replicate (fallback).
+    Recibe JSON: { "gender": "female/male", "image_base64": "<base64>" }
+    Retorna JSON con imagen base64.
+    """
+    data = await request.json()
+    gender = data.get("gender", "female")
+    image_base64 = data.get("image_base64")
+
+    if not image_base64:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Image missing"})
 
     prompt = (
-        "Using the attached image of the person, generate a new realistic full-body outfit. "
-        "Do NOT change the face, skin tone, body shape, or proportions. "
-        "Preserve identity, facial features, and measurements exactly. "
-        "Only change clothing. "
-        "The outfit should fit naturally and look photorealistic. "
-        f"The person is a {gender}."
+        "Generate a realistic photo of the person wearing a new outfit. "
+        "Preserve the original face and skin, adjust clothing naturally to body shape and size. "
+        "Natural lighting, realistic textures, high-resolution. "
+        "Avoid cartoon, anime, or game-style. "
+        f"Gender: {gender}."
     )
 
-    images_base64: list[str] = []
+    # =======================
+    # 1️⃣ Intentar Hugging Face
+    # =======================
+    try:
+        logger.info("Trying Hugging Face generation...")
+        hf_headers = {"Authorization": f"Bearer {HF_API_TOKEN}"} if HF_API_TOKEN else {}
+        hf_payload = {
+            "inputs": prompt,
+            "parameters": {
+                "image": image_base64,
+                "num_images": 1,
+                "guidance_scale": 7.5,
+                "size": "1024x1024"
+            }
+        }
 
-    # ==========================================================
-    # 1️⃣ TRY HUGGING FACE
-    # ==========================================================
-    if HF_API_TOKEN:
-        try:
-            logger.info("Trying Hugging Face generation...")
+        async with httpx.AsyncClient(timeout=120) as client:
+            hf_response = await client.post("https://api-inference.huggingface.co/models/CompVis/stable-diffusion-v1-5", 
+                                            headers=hf_headers, json=hf_payload)
+            if hf_response.status_code == 200:
+                hf_json = hf_response.json()
+                # hf_json puede variar según modelo, aquí asumimos que devuelve base64 en hf_json["images"][0]
+                if "images" in hf_json and len(hf_json["images"]) > 0:
+                    img_base64 = hf_json["images"][0]
+                    logger.info("✅ Hugging Face generation success")
+                    return JSONResponse(content={"status": "ok", "image": img_base64})
+            logger.warning(f"HF failed: {hf_response.status_code}, {hf_response.text}")
+    except Exception as e:
+        logger.warning(f"HF failed: {e}")
 
-            response = requests.post(
-                HF_MODEL_URL,
-                headers=HF_HEADERS,
-                json={
-                    "inputs": prompt,
-                    "parameters": {
-                        "guidance_scale": 7.5,
-                        "num_inference_steps": 30,
-                    },
-                },
-                timeout=90,
-            )
+    # =======================
+    # 2️⃣ Intentar Replicate como fallback
+    # =======================
+    try:
+        logger.info("Trying Replicate fallback...")
+        model = replicate.models.get("stability-ai/sdxl")
+        prediction = model.predict(
+            prompt=prompt,
+            init_image=image_base64,
+            num_outputs=1,
+            width=1024,
+            height=1024
+        )
+        if prediction and len(prediction) > 0:
+            logger.info("✅ Replicate generation success")
+            return JSONResponse(content={"status": "ok", "image": prediction[0]})
+    except Exception as e:
+        logger.error(f"Replicate failed: {e}")
 
-            if response.status_code == 200:
-                image_bytes = response.content
-                images_base64.append(
-                    "data:image/png;base64,"
-                    + base64.b64encode(image_bytes).decode("utf-8")
-                )
-                logger.info("✅ Hugging Face generation success")
-                return JSONResponse(
-                    {"status": "ok", "demo_outfits": images_base64}
-                )
-
-            else:
-                logger.warning(
-                    f"HF failed {response.status_code}: {response.text}"
-                )
-
-        except Exception as e:
-            logger.warning(f"HF exception: {e}")
-
-    # ==========================================================
-    # 2️⃣ TRY REPLICATE (FALLBACK)
-    # ==========================================================
-    if REPLICATE_API_KEY:
-        try:
-            logger.info("Trying Replicate fallback...")
-
-            output = replicate.run(
-                "stability-ai/stable-diffusion",
-                input={
-                    "prompt": prompt,
-                    "num_inference_steps": 30,
-                    "guidance_scale": 7.5,
-                    "width": 512,
-                    "height": 768,
-                },
-            )
-
-            if isinstance(output, list) and len(output) > 0:
-                for url in output:
-                    r = requests.get(url, timeout=30)
-                    if r.status_code == 200:
-                        images_base64.append(
-                            "data:image/png;base64,"
-                            + base64.b64encode(r.content).decode("utf-8")
-                        )
-
-                if images_base64:
-                    logger.info("✅ Replicate generation success")
-                    return JSONResponse(
-                        {"status": "ok", "demo_outfits": images_base64}
-                    )
-
-            logger.warning("Replicate returned no images")
-
-        except Exception as e:
-            logger.error(f"Replicate failed: {e}")
-
-    # ==========================================================
-    # ❌ TOTAL FAILURE
-    # ==========================================================
-    logger.error("Image generation failed (HF + Replicate)")
-    raise HTTPException(
-        status_code=500,
-        detail="Image generation failed (HF + Replicate)",
-    )
+    return JSONResponse(status_code=500, content={"status": "error", "message": "Image generation failed (HF + Replicate)"})
