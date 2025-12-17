@@ -1,72 +1,86 @@
 # routers/generate_outfit_demo.py
-import os
 import base64
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-import replicate
 import httpx
 
 router = APIRouter()
 logger = logging.getLogger("generate_outfit_demo")
 logging.basicConfig(level=logging.INFO)
 
-REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_KEY")
-if not REPLICATE_API_TOKEN:
-    logger.warning("⚠️ REPLICATE_API_KEY missing — Replicate disabled")
-else:
-    os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
+# --- Stable Horde API config (no key required para uso básico) ---
+HORDE_API_KEY = "0000000000"  # clave pública para demo (modo anónimo)
+
+# --- DeepAI fallback key (requiere registro en https://deepai.org/) ---
+DEEPAI_API_KEY = os.getenv("DEEPAI_API_KEY")
 
 def build_prompt(gender: str) -> str:
     return (
-        f"A photorealistic full-body wardrobe outfit for a {gender} person, "
-        "keeping facial features, skin tone, and body proportions true to the original reference. "
-        "High-quality, realistic lighting and textures, no cartoon or game style."
+        f"A photorealistic full body outfit for a {gender} person. "
+        "Keep the face, body proportions and skin tone natural. "
+        "High resolution, realistic clothing."
     )
 
 @router.post("/generate_outfit_demo")
 async def generate_outfit_demo(payload: dict):
     gender = payload.get("gender", "person")
-    image_base64 = payload.get("image_base64")
+    prompt = build_prompt(gender)
 
-    if not image_base64:
-        return JSONResponse({"status": "error", "message": "Missing image_base64"}, status_code=400)
-
-    # --- Replicate free model (e.g., ideogram‑ai/ideogram‑v3‑turbo) ---
+    ### 1️⃣ Stable Horde (Principal)
     try:
-        logger.info("➡️ Running Replicate free text‑to‑image model")
-
-        # Usar versión de un modelo gratuito que esté en ./collections/text‑to‑image
-        # Ejemplo: ideogram‑ai/ideogram‑v3‑turbo
-        model_id = "ideogram‑ai/ideogram‑v3‑turbo"
-
-        # Construir inputs — este modelo puede manejar texto y a veces imágenes,  
-        # pero en modo free se usa mejor solo prompt textual y el dataset del modelo.
-        output = replicate.run(
-            model_id,
-            input={
-                "prompt": build_prompt(gender),
-                "num_outputs": 1
+        logger.info("➡️ Trying Stable Horde free generation")
+        horde_data = {
+            "prompt": prompt,
+            "params": {
+                "sampler_name": "k_euler", 
+                "steps": 25,
+                "cfg_scale": 7.5,
+                "width": 512,
+                "height": 768
             },
-        )
-
-        logger.info(f"Replicate output: {output}")
-
-        if not output or len(output) == 0:
-            raise Exception("No image returned by Replicate free model")
-
-        # Descarga la imagen final desde URL
-        img_url = output[0]
-        async with httpx.AsyncClient() as client:
-            img_resp = await client.get(img_url)
-        if img_resp.status_code != 200:
-            raise Exception("Failed to download image from Replicate")
-
-        img_bytes = img_resp.content
-        img_b64 = base64.b64encode(img_bytes).decode("utf‑8")
-        return JSONResponse({"status": "ok", "image": img_b64})
-
+            "runners": ["stable_diffusion"]
+        }
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(
+                "https://stablehorde.net/api/v2/generate/async",
+                headers={"apikey": HORDE_API_KEY},
+                json=horde_data
+            )
+        if response.status_code == 200:
+            result = response.json()
+            # base64 image en “img”
+            image_b64 = result.get("generations", [{}])[0].get("img")
+            if image_b64:
+                logger.info("✅ Stable Horde image generated")
+                return JSONResponse({"status": "ok", "image": image_b64})
     except Exception as e:
-        logger.error(f"❌ Replicate free model failed: {e}")
+        logger.warning(f"⚠️ Stable Horde failed: {e}")
 
-    return JSONResponse({"status": "error", "message": "Image generation failed (free model)"}, status_code=500)
+    ### 2️⃣ Fallback → DeepAI (requiere API key gratuita)
+    if DEEPAI_API_KEY:
+        try:
+            logger.info("➡️ Trying DeepAI fallback")
+            async with httpx.AsyncClient(timeout=120) as client:
+                response = await client.post(
+                    "https://api.deepai.org/api/text2img",
+                    headers={"api-key": DEEPAI_API_KEY},
+                    data={"text": prompt}
+                )
+            if response.status_code == 200:
+                result = response.json()
+                img_url = result.get("output_url")
+                if img_url:
+                    async with httpx.AsyncClient() as client:
+                        img_resp = await client.get(img_url)
+                    img_b64 = base64.b64encode(img_resp.content).decode("utf-8")
+                    logger.info("✅ DeepAI fallback success")
+                    return JSONResponse({"status": "ok", "image": img_b64})
+        except Exception as e:
+            logger.warning(f"⚠️ DeepAI fallback failed: {e}")
+
+    # --- Si todo falla ---
+    return JSONResponse(
+        {"status": "error", "message": "No se pudo generar imagen con servicios gratuitos."},
+        status_code=500
+    )
