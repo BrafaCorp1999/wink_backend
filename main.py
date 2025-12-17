@@ -21,6 +21,7 @@ app = FastAPI(
 # =========================
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 REPLICATE_API_KEY = os.getenv("REPLICATE_API_KEY")
+HF_API_KEY = os.getenv("HF_API_KEY")
 
 if GEMINI_KEY:
     print("🔹 Gemini API detected → Ready")
