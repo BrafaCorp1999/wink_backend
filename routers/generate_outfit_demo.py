@@ -1,8 +1,9 @@
 # routers/generate_outfit_demo.py
+import os   # <--- Agregar esta línea
 import base64
 import logging
-from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 import httpx
 
 router = APIRouter()
