@@ -1,4 +1,3 @@
-# routers/generate_outfit_demo.py
 import os
 import time
 import base64
@@ -13,11 +12,6 @@ NANOBANANA_URL = "https://api.nanobananaapi.ai/api/v1/nanobanana/generate"
 
 @router.post("/generate_outfit_demo")
 async def generate_outfit_demo(payload: dict):
-    """
-    Genera un outfit completo usando Nano Banana Text-to-Image.
-    Espera hasta ~120s por la imagen si es necesario.
-    """
-
     if not NANOBANANA_API_KEY:
         raise HTTPException(status_code=500, detail="Nano Banana API key no configurada")
 
@@ -40,52 +34,39 @@ async def generate_outfit_demo(payload: dict):
         "prompt": prompt.strip(),
         "numImages": 1,
         "type": "TEXTTOIAMGE",
-        "image_size": "3:4",  # puedes cambiar 3:4, 4:5, 9:16 según preferencia
+        "image_size": "3:4",
+        "callBackUrl": "https://your-callback-url.com/callback"  # requerido por NanoBanana
     }
 
     try:
-        # 1️⃣ Crear tarea
-        response = requests.post(NANOBANANA_URL, json=body, headers=headers, timeout=120)
+        response = requests.post(NANOBANANA_URL, json=body, headers=headers, timeout=60)
         response.raise_for_status()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al crear tarea Nano Banana: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error llamando NanoBanana: {e}")
 
-    try:
-        data = response.json()
-    except Exception:
-        raise HTTPException(status_code=500, detail="Nano Banana no devolvió JSON válido")
+    data = response.json()
+    
+    # Validación robusta
+    if not data or data.get("code") != 200 or "data" not in data or "taskId" not in data["data"]:
+        return JSONResponse({"status": "pending", "message": "Imagen en proceso, intente nuevamente en unos segundos"})
 
-    # Caso 1: tarea lista inmediatamente
-    if data.get("status") == "success":
-        image_url = data.get("data", {}).get("images", [None])[0]
-        if not image_url:
-            raise HTTPException(status_code=500, detail="No se recibió URL de imagen")
-        
-        image_bytes = requests.get(image_url).content
-        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-        return JSONResponse({"status": "ok", "image": image_base64})
-
-    # Caso 2: tarea pendiente → polling
-    task_id = data.get("data", {}).get("taskId")
-    if not task_id:
-        raise HTTPException(status_code=500, detail="No se recibió taskId ni imagen")
-
+    task_id = data["data"]["taskId"]
     result_url = f"https://api.nanobananaapi.ai/api/v1/nanobanana/result/{task_id}"
 
-    for _ in range(60):  # hasta ~120s (2s sleep * 60)
+    for _ in range(30):  # ~60s máximo de espera
         time.sleep(2)
         try:
-            result = requests.get(result_url, headers=headers, timeout=60).json()
-        except Exception:
+            result = requests.get(result_url, headers=headers, timeout=30).json()
+        except:
             continue
 
-        if result.get("data", {}).get("status") == "SUCCESS":
+        status = result.get("data", {}).get("status")
+        if status == "SUCCESS":
             image_url = result["data"]["images"][0]
             image_bytes = requests.get(image_url).content
             image_base64 = base64.b64encode(image_bytes).decode("utf-8")
             return JSONResponse({"status": "ok", "image": image_base64})
+        elif status == "FAILED":
+            break
 
-        if result.get("data", {}).get("status") == "FAILED":
-            raise HTTPException(status_code=500, detail="Nano Banana falló generando la imagen")
-
-    raise HTTPException(status_code=500, detail="Timeout generando imagen")
+    return JSONResponse({"status": "pending", "message": "Imagen en proceso, intente nuevamente en unos segundos"})
