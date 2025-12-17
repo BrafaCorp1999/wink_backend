@@ -4,113 +4,144 @@ import logging
 import requests
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
 
 import replicate
 
 router = APIRouter()
-logger = logging.getLogger("generate_outfit_demo")
-logging.basicConfig(level=logging.INFO)
 
-HF_TOKEN = os.getenv("HF_API_TOKEN")
+# =========================
+# Logging
+# =========================
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("generate_outfit_demo")
+
+# =========================
+# Environment variables
+# =========================
+HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 REPLICATE_API_KEY = os.getenv("REPLICATE_API_KEY")
+
+if not HF_API_TOKEN:
+    logger.warning("⚠️ HF_API_TOKEN missing → Hugging Face disabled")
 
 if REPLICATE_API_KEY:
     os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_KEY
-
-
-# =========================
-# Request schema
-# =========================
-class OutfitDemoRequest(BaseModel):
-    image_base64: str
-    gender: str
-
+else:
+    logger.warning("⚠️ REPLICATE_API_KEY missing → Replicate disabled")
 
 # =========================
-# HF image-to-image
+# Hugging Face config
 # =========================
-def generate_with_hf(image_base64: str) -> str:
-    if not HF_TOKEN:
-        raise RuntimeError("HF token missing")
+HF_MODEL_URL = (
+    "https://router.huggingface.co/hf-inference/models/"
+    "stabilityai/stable-diffusion-xl-base-1.0"
+)
 
-    url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-refiner-1.0"
-    headers = {
-        "Authorization": f"Bearer {HF_TOKEN}",
-        "Content-Type": "application/json",
-    }
-
-    prompt = (
-        "Generate a realistic fashion outfit on the same person. "
-        "Do not change face, skin tone, body proportions or pose. "
-        "Keep the same person identity. "
-        "Outfit should look natural and well fitted."
-    )
-
-    payload = {
-        "inputs": {
-            "image": image_base64,
-            "prompt": prompt,
-        }
-    }
-
-    r = requests.post(url, headers=headers, json=payload, timeout=120)
-
-    if r.status_code != 200:
-        raise RuntimeError(f"HF error {r.status_code}: {r.text}")
-
-    return base64.b64encode(r.content).decode("utf-8")
-
+HF_HEADERS = {
+    "Authorization": f"Bearer {HF_API_TOKEN}",
+    "Content-Type": "application/json",
+}
 
 # =========================
-# Replicate fallback
-# =========================
-def generate_with_replicate(image_base64: str) -> str:
-    prompt = (
-        "Generate a realistic outfit on the same person. "
-        "Do not change face, skin tone, body proportions or pose. "
-        "Only change clothing. Natural fashion photography."
-    )
-
-    output = replicate.run(
-        "stability-ai/sdxl:2b017d8cfc9a1f0a3c7b6d4bb2b4f9b7c5f3e7e6a1cbb8d90d0d87b5d3",
-        input={
-            "prompt": prompt,
-            "image": image_base64,
-            "strength": 0.35,
-        },
-    )
-
-    if not output:
-        raise RuntimeError("Replicate returned empty output")
-
-    image_url = output[0]
-    img_bytes = requests.get(image_url, timeout=60).content
-    return base64.b64encode(img_bytes).decode("utf-8")
-
-
-
-# =========================
-# API endpoint
+# Endpoint
 # =========================
 @router.post("/generate_outfit_demo")
-def generate_outfit_demo(data: OutfitDemoRequest):
-    try:
-        logger.info("Trying Hugging Face generation...")
-        img = generate_with_hf(data.image_base64)
-        return {"demo_outfits": [img]}
+async def generate_outfit_demo(payload: dict):
+    gender = payload.get("gender", "person")
 
-    except Exception as hf_error:
-        logger.warning(f"HF failed: {hf_error}")
+    prompt = (
+        "Using the attached image of the person, generate a new realistic full-body outfit. "
+        "Do NOT change the face, skin tone, body shape, or proportions. "
+        "Preserve identity, facial features, and measurements exactly. "
+        "Only change clothing. "
+        "The outfit should fit naturally and look photorealistic. "
+        f"The person is a {gender}."
+    )
 
-    try:
-        logger.info("Trying Replicate fallback...")
-        img = generate_with_replicate(data.image_base64)
-        return {"demo_outfits": [img]}
+    images_base64: list[str] = []
 
-    except Exception as rep_error:
-        logger.error(f"Replicate failed: {rep_error}")
+    # ==========================================================
+    # 1️⃣ TRY HUGGING FACE
+    # ==========================================================
+    if HF_API_TOKEN:
+        try:
+            logger.info("Trying Hugging Face generation...")
 
+            response = requests.post(
+                HF_MODEL_URL,
+                headers=HF_HEADERS,
+                json={
+                    "inputs": prompt,
+                    "parameters": {
+                        "guidance_scale": 7.5,
+                        "num_inference_steps": 30,
+                    },
+                },
+                timeout=90,
+            )
+
+            if response.status_code == 200:
+                image_bytes = response.content
+                images_base64.append(
+                    "data:image/png;base64,"
+                    + base64.b64encode(image_bytes).decode("utf-8")
+                )
+                logger.info("✅ Hugging Face generation success")
+                return JSONResponse(
+                    {"status": "ok", "demo_outfits": images_base64}
+                )
+
+            else:
+                logger.warning(
+                    f"HF failed {response.status_code}: {response.text}"
+                )
+
+        except Exception as e:
+            logger.warning(f"HF exception: {e}")
+
+    # ==========================================================
+    # 2️⃣ TRY REPLICATE (FALLBACK)
+    # ==========================================================
+    if REPLICATE_API_KEY:
+        try:
+            logger.info("Trying Replicate fallback...")
+
+            output = replicate.run(
+                "stability-ai/stable-diffusion",
+                input={
+                    "prompt": prompt,
+                    "num_inference_steps": 30,
+                    "guidance_scale": 7.5,
+                    "width": 512,
+                    "height": 768,
+                },
+            )
+
+            if isinstance(output, list) and len(output) > 0:
+                for url in output:
+                    r = requests.get(url, timeout=30)
+                    if r.status_code == 200:
+                        images_base64.append(
+                            "data:image/png;base64,"
+                            + base64.b64encode(r.content).decode("utf-8")
+                        )
+
+                if images_base64:
+                    logger.info("✅ Replicate generation success")
+                    return JSONResponse(
+                        {"status": "ok", "demo_outfits": images_base64}
+                    )
+
+            logger.warning("Replicate returned no images")
+
+        except Exception as e:
+            logger.error(f"Replicate failed: {e}")
+
+    # ==========================================================
+    # ❌ TOTAL FAILURE
+    # ==========================================================
+    logger.error("Image generation failed (HF + Replicate)")
     raise HTTPException(
         status_code=500,
         detail="Image generation failed (HF + Replicate)",
