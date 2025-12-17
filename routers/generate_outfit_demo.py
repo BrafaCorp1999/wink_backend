@@ -7,66 +7,44 @@ from fastapi.responses import JSONResponse
 
 router = APIRouter()
 
-NANOBANANA_API_KEY = os.getenv("NANOBANANA_API_KEY")
-NANOBANANA_URL = "https://api.nanobananaapi.ai/api/v1/nanobanana/generate"
-
 @router.post("/generate_outfit_demo")
 async def generate_outfit_demo(payload: dict):
+    from fastapi.responses import JSONResponse
+    import requests, base64, time, os
+
+    NANOBANANA_API_KEY = os.getenv("NANOBANANA_API_KEY")
     if not NANOBANANA_API_KEY:
-        raise HTTPException(status_code=500, detail="Nano Banana API key no configurada")
+        return JSONResponse({"status": "error", "message": "API key no configurada"}, status_code=500)
 
     gender = payload.get("gender", "female")
+    prompt = f"Ultra-realistic full-body photo of a {gender} person wearing a modern, stylish outfit. Preserve original facial identity, proportions and skin tone."
 
-    prompt = f"""
-    Ultra-realistic full-body photo of a {gender} person wearing a modern, stylish outfit.
-    Preserve original facial identity, facial proportions and skin tone.
-    Natural human face, realistic anatomy, real fabric textures.
-    Studio lighting, DSLR photo, sharp focus.
-    No cartoon, no animation, no CGI, no game style, no distortion.
-    """
+    # 1️⃣ Crear tarea
+    response = requests.post(
+        "https://api.nanobananaapi.ai/api/v1/nanobanana/generate",
+        json={"prompt": prompt, "numImages": 1, "type": "TEXTTOIAMGE", "image_size": "3:4"},
+        headers={"Authorization": f"Bearer {NANOBANANA_API_KEY}"}
+    )
+    if response.status_code != 200 or not response.json().get("data"):
+        return JSONResponse({"status": "error", "message": "NanoBanana no respondió"}, status_code=500)
 
-    headers = {
-        "Authorization": f"Bearer {NANOBANANA_API_KEY}",
-        "Content-Type": "application/json",
-    }
+    task_id = response.json()["data"].get("taskId")
+    if not task_id:
+        return JSONResponse({"status": "error", "message": "No se recibió taskId"}, status_code=500)
 
-    body = {
-        "prompt": prompt.strip(),
-        "numImages": 1,
-        "type": "TEXTTOIAMGE",
-        "image_size": "3:4",
-        "callBackUrl": "https://your-callback-url.com/callback"  # requerido por NanoBanana
-    }
-
-    try:
-        response = requests.post(NANOBANANA_URL, json=body, headers=headers, timeout=60)
-        response.raise_for_status()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error llamando NanoBanana: {e}")
-
-    data = response.json()
-    
-    # Validación robusta
-    if not data or data.get("code") != 200 or "data" not in data or "taskId" not in data["data"]:
-        return JSONResponse({"status": "pending", "message": "Imagen en proceso, intente nuevamente en unos segundos"})
-
-    task_id = data["data"]["taskId"]
-    result_url = f"https://api.nanobananaapi.ai/api/v1/nanobanana/result/{task_id}"
-
-    for _ in range(30):  # ~60s máximo de espera
+    # 2️⃣ Polling
+    for _ in range(40):  # hasta ~80s
         time.sleep(2)
-        try:
-            result = requests.get(result_url, headers=headers, timeout=30).json()
-        except:
-            continue
-
+        result = requests.get(f"https://api.nanobananaapi.ai/api/v1/nanobanana/result/{task_id}",
+                              headers={"Authorization": f"Bearer {NANOBANANA_API_KEY}"}).json()
         status = result.get("data", {}).get("status")
         if status == "SUCCESS":
             image_url = result["data"]["images"][0]
             image_bytes = requests.get(image_url).content
             image_base64 = base64.b64encode(image_bytes).decode("utf-8")
             return JSONResponse({"status": "ok", "image": image_base64})
-        elif status == "FAILED":
+        if status == "FAILED":
             break
 
-    return JSONResponse({"status": "pending", "message": "Imagen en proceso, intente nuevamente en unos segundos"})
+    return JSONResponse({"status": "error", "message": "Timeout generando imagen"}, status_code=500)
+
