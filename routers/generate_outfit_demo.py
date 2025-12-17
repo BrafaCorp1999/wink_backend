@@ -10,7 +10,7 @@ router = APIRouter()
 NANOBANANA_API_KEY = os.getenv("NANOBANANA_API_KEY")
 NANOBANANA_URL = "https://api.nanobananaapi.ai/api/v1/nanobanana/generate"
 
-@router.post("/api/generate_outfit_demo")
+@router.post("/generate_outfit_demo")
 async def generate_outfit_demo(payload: dict):
     if not NANOBANANA_API_KEY:
         raise HTTPException(status_code=500, detail="Nano Banana API key no configurada")
