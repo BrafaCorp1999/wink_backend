@@ -4,6 +4,7 @@ import base64
 import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from fastapi.responses import JSONResponse
 import httpx
 
 router = APIRouter()
