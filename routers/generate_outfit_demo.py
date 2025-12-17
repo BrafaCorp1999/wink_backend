@@ -1,103 +1,85 @@
+# routers/generate_outfit_demo.py
 import os
 import base64
-import requests
-from fastapi import APIRouter, HTTPException
+import httpx
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 router = APIRouter()
 
-DEAPI_API_KEY = os.getenv("DEAPI_API_KEY")
+# =========================
+# Leer llaves de entorno
+# =========================
 CLOUDFLARE_API_KEY = os.getenv("CLOUDFLARE_API_KEY")
 CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
 
 # =========================
-# 🟢 Endpoint principal
+# ENDPOINT
 # =========================
 @router.post("/generate_outfit_demo")
-async def generate_outfit_demo(payload: dict):
-    gender = payload.get("gender", "female")
-    print(f"[LOG] 🔹 Solicitud de outfit para gender={gender}")
-
-    prompt = f"Ultra-realistic full body photo of a {gender} person wearing a modern stylish outfit. No cartoon."
-
-    # 1️⃣ Intentar deAPI
-    if DEAPI_API_KEY:
-        try:
-            print("[LOG] 🔹 Intentando deAPI...")
-            img_bytes = try_deapi(prompt)
-            print("[LOG] ✅ deAPI generó imagen")
-            return JSONResponse({"status":"ok", "image": base64.b64encode(img_bytes).decode("utf-8")})
-        except Exception as e:
-            print(f"[WARN] ⚠️ deAPI falló: {e}")
-
-    # 2️⃣ Intentar Cloudflare Workers AI
-    if CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID:
-        try:
-            print("[LOG] 🔹 Intentando Cloudflare Workers AI...")
-            img_bytes = try_cloudflare(prompt)
-            print("[LOG] ✅ Cloudflare Workers generó imagen")
-            return JSONResponse({"status":"ok", "image": base64.b64encode(img_bytes).decode("utf-8")})
-        except Exception as e:
-            print(f"[WARN] ⚠️ Cloudflare Workers falló: {e}")
-
-    # 3️⃣ Intentar SubNP Free API
+async def generate_outfit_demo(request: Request):
     try:
-        print("[LOG] 🔹 Intentando SubNP Free API...")
-        img_bytes = try_subnp(prompt)
-        print("[LOG] ✅ SubNP generó imagen")
-        return JSONResponse({"status":"ok", "image": base64.b64encode(img_bytes).decode("utf-8")})
+        data = await request.json()
+        gender = data.get("gender")
+        image_base64 = data.get("image_base64")
+
+        if not gender or not image_base64:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Faltan datos"})
+
+        # =========================
+        # 1️⃣ Intentar Cloudflare Workers AI
+        # =========================
+        if CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID:
+            try:
+                async with httpx.AsyncClient(timeout=120) as client:
+                    cf_payload = {
+                        "prompt": f"Outfit for a {gender} based on the user's body image",
+                        "type": "IMAGETOIAMGE",
+                        "imageUrls": [f"data:image/png;base64,{image_base64}"],
+                        "numImages": 1,
+                        "image_size": "1:1"
+                    }
+                    cf_headers = {
+                        "Authorization": f"Bearer {CLOUDFLARE_API_KEY}",
+                        "Content-Type": "application/json"
+                    }
+                    cf_url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/workers/ai/generate"
+                    cf_resp = await client.post(cf_url, json=cf_payload, headers=cf_headers)
+                    cf_data = cf_resp.json()
+                    print("🔹 Cloudflare response:", cf_data)
+
+                    if cf_resp.status_code == 200 and "data" in cf_data and len(cf_data["data"]) > 0:
+                        img_base64 = cf_data["data"][0]["b64_json"]
+                        return {"status": "ok", "image": img_base64}
+                    else:
+                        print("⚠️ Cloudflare no devolvió imagen válida, intentando fallback...")
+            except Exception as e:
+                print("⚠️ Error Cloudflare:", e)
+
+        # =========================
+        # 2️⃣ Fallback: API gratuita sin key
+        # =========================
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                free_payload = {
+                    "prompt": f"Outfit for a {gender} based on the user's body image",
+                    "image_base64": image_base64
+                }
+                free_resp = await client.post(
+                    "https://subnp-free-ai.vercel.app/api/generate_outfit_demo",
+                    json=free_payload
+                )
+                free_data = free_resp.json()
+                print("🔹 Free API response:", free_data)
+
+                if free_resp.status_code == 200 and free_data.get("status") == "ok":
+                    return {"status": "ok", "image": free_data["image"]}
+                else:
+                    return JSONResponse(status_code=500, content={"status": "error", "message": "No se pudo generar la imagen con ninguna API"})
+        except Exception as e:
+            print("⚠️ Error Free API:", e)
+            return JSONResponse(status_code=500, content={"status": "error", "message": "Error interno al generar imagen"})
+
     except Exception as e:
-        print(f"[WARN] ⚠️ SubNP Free API falló: {e}")
-
-    # Ninguno funcionó
-    raise HTTPException(status_code=500, detail="Ningún servicio pudo generar la imagen")
-
-# =========================
-# 🟢 Función deAPI
-# =========================
-def try_deapi(prompt: str) -> bytes:
-    url = "https://api.deapi.ai/v1/image/text2image"
-    headers = {"Authorization": f"Bearer {DEAPI_API_KEY}", "Content-Type": "application/json"}
-    body = {"prompt": prompt, "width": 512, "height": 768, "num_images": 1}
-    resp = requests.post(url, json=body, headers=headers, timeout=120)
-    if resp.status_code != 200:
-        raise Exception(f"deAPI status={resp.status_code}, body={resp.text}")
-    data = resp.json()
-    img_url = data.get("data", {}).get("image_url")
-    img_b64 = data.get("data", {}).get("image_base64")
-    if img_url:
-        return requests.get(img_url).content
-    elif img_b64:
-        return base64.b64decode(img_b64.split(",")[-1])
-    else:
-        raise Exception("deAPI no devolvió imagen")
-
-# =========================
-# 🟢 Función Cloudflare Workers AI
-# =========================
-def try_cloudflare(prompt: str) -> bytes:
-    url = f"https://{CLOUDFLARE_ACCOUNT_ID}.cloudflareworkers.ai/ai/run/stable-diffusion-xl-base-1.0"
-    headers = {"Authorization": f"Bearer {CLOUDFLARE_API_KEY}", "Content-Type": "application/json"}
-    body = {"prompt": prompt}
-    resp = requests.post(url, json=body, headers=headers, timeout=120)
-    if resp.status_code != 200:
-        raise Exception(f"Cloudflare status={resp.status_code}, body={resp.text}")
-    data = resp.json()
-    img_b64 = data.get("result", {}).get("image_base64")
-    if not img_b64:
-        raise Exception("Cloudflare no devolvió imagen")
-    return base64.b64decode(img_b64.split(",")[-1])
-
-# =========================
-# 🟢 Función SubNP Free API
-# =========================
-def try_subnp(prompt: str) -> bytes:
-    url = "https://subnp.com/api/free/generate"
-    resp = requests.post(url, json={"prompt": prompt}, headers={"Content-Type": "application/json"}, timeout=120)
-    if resp.status_code != 200:
-        raise Exception(f"SubNP status={resp.status_code}, body={resp.text}")
-    data = resp.json()
-    img_url = data.get("image_url")
-    if not img_url:
-        raise Exception("SubNP no devolvió imagen")
-    return requests.get(img_url).content
+        print("❌ ERROR GENERAL:", e)
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
