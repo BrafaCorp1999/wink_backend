@@ -1,102 +1,163 @@
-# routers/generate_outfit_demo.py
 import os
 import base64
 import logging
 import requests
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 import replicate
-import google.generativeai as genai  # SDK de Gemini v1
-from google.generativeai import types
 
 router = APIRouter()
+
+# =========================
+# Logging
+# =========================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("generate_outfit_demo")
 
 # =========================
-# Cargar llaves de entorno
+# Env keys
 # =========================
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+HF_API_KEY = os.getenv("HF_API_KEY")
 REPLICATE_API_KEY = os.getenv("REPLICATE_API_KEY")
 
-if not GEMINI_API_KEY:
-    logger.warning("⚠️ GEMINI_API_KEY not set — Gemini disabled")
-if not REPLICATE_API_KEY:
-    logger.warning("⚠️ REPLICATE_API_KEY not set — Replicate disabled")
+HF_HEADERS = {
+    "Authorization": f"Bearer {HF_API_KEY}",
+    "Content-Type": "application/json",
+}
 
 # =========================
-# Inicializar cliente Gemini
+# MODELS
 # =========================
-gemini_client = None
-if GEMINI_API_KEY:
-    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-    logger.info("🔹 Gemini client initialized")
+HF_MODEL_URL = (
+    "https://api-inference.huggingface.co/models/"
+    "stabilityai/stable-diffusion-xl-base-1.0"
+)
+
+REPLICATE_MODEL = "stability-ai/sdxl"
 
 # =========================
-# Endpoint principal
+# ENDPOINT
 # =========================
 @router.post("/generate_outfit_demo")
 async def generate_outfit_demo(payload: dict):
-    gender = payload.get("gender", "unknown")
-    outfits_b64 = []
+    """
+    payload:
+    {
+        "image_base64": "data:image/png;base64,..."
+    }
+    """
 
-    # -------------------------
-    # 1️⃣ Generar con Gemini
-    # -------------------------
-    if gemini_client:
+    image_base64 = payload.get("image_base64")
+
+    if not image_base64:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "image_base64 missing"},
+        )
+
+    # Limpiar base64
+    if "," in image_base64:
+        image_base64 = image_base64.split(",")[1]
+
+    prompt = (
+        "Using the attached photo of a real person, generate a new full-body outfit.\n"
+        "Do NOT change face, skin tone, body shape, or proportions.\n"
+        "Do NOT deform the face or body.\n"
+        "Keep the same person identity.\n"
+        "Only change the clothes.\n"
+        "Clothes must fit naturally to the body.\n"
+        "Realistic lighting, natural pose, high quality fashion photography."
+    )
+
+    # =========================
+    # 1️⃣ Hugging Face (MAIN)
+    # =========================
+    if HF_API_KEY:
         try:
-            logger.info("➡️ Generating image with Gemini")
-            response = gemini_client.generate_image(
-                model="image-alpha-001",
-                prompt=f"A full-body outfit for a {gender} person, realistic, natural pose.",
-                size="512x768"
-            )
-            image_bytes = requests.get(response.url).content
-            outfits_b64.append("data:image/png;base64," + base64.b64encode(image_bytes).decode("utf-8"))
-            logger.info("✅ Gemini image generated")
-        except Exception as e:
-            logger.warning(f"⚠️ Error Gemini: {e}")
+            logger.info("➡️ Generating image with Hugging Face (SDXL)")
 
-    # -------------------------
-    # 2️⃣ Generar con Replicate
-    # -------------------------
+            response = requests.post(
+                HF_MODEL_URL,
+                headers=HF_HEADERS,
+                json={
+                    "inputs": prompt,
+                    "parameters": {
+                        "num_inference_steps": 30,
+                        "guidance_scale": 7.5,
+                    },
+                },
+                timeout=120,
+            )
+
+            if response.status_code == 200:
+                img_bytes = response.content
+                img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+
+                logger.info("✅ Hugging Face image generated")
+
+                return JSONResponse(
+                    {
+                        "status": "ok",
+                        "source": "huggingface",
+                        "image": f"data:image/png;base64,{img_b64}",
+                    }
+                )
+
+            logger.warning(
+                f"⚠️ HF error {response.status_code}: {response.text}"
+            )
+
+        except Exception as e:
+            logger.warning(f"⚠️ HF exception: {e}")
+
+    # =========================
+    # 2️⃣ Replicate (FALLBACK)
+    # =========================
     if REPLICATE_API_KEY:
-        os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_KEY
         try:
-            logger.info("➡️ Generating image with Replicate")
-            output_urls = replicate.run(
-                "stability-ai/stable-diffusion:latest",
+            logger.info("➡️ Generating image with Replicate (SDXL)")
+
+            output = replicate.run(
+                REPLICATE_MODEL,
                 input={
-                    "prompt": f"A full-body outfit for a {gender} person, realistic, natural pose.",
-                    "width": 512,
-                    "height": 768
-                }
+                    "prompt": prompt,
+                    "image": image_base64,
+                    "width": 768,
+                    "height": 1024,
+                },
             )
-            if isinstance(output_urls, list):
-                for url in output_urls:
-                    r = requests.get(url)
-                    if r.status_code == 200:
-                        outfits_b64.append("data:image/png;base64," + base64.b64encode(r.content).decode("utf-8"))
-                logger.info("✅ Replicate images generated")
-        except Exception as e:
-            logger.warning(f"⚠️ Error Replicate: {e}")
 
-    # -------------------------
-    # 3️⃣ Fallback local
-    # -------------------------
-    if not outfits_b64:
-        fallback_path = "./demo_outfit_fallback.png"
-        try:
-            with open(fallback_path, "rb") as f:
-                outfits_b64.append("data:image/png;base64," + base64.b64encode(f.read()).decode("utf-8"))
-            logger.warning("⚠️ Using local fallback image")
-        except Exception as e:
-            logger.error(f"❌ Falló fallback local: {e}")
-            return JSONResponse({
-                "status": "error",
-                "message": "No se pudo generar ninguna imagen. Revisa los logs."
-            })
+            if isinstance(output, list) and len(output) > 0:
+                img_url = output[0]
+                img_resp = requests.get(img_url)
 
-    return JSONResponse({"status": "ok", "demo_outfits": outfits_b64})
+                if img_resp.status_code == 200:
+                    img_b64 = base64.b64encode(img_resp.content).decode("utf-8")
+
+                    logger.info("✅ Replicate image generated")
+
+                    return JSONResponse(
+                        {
+                            "status": "ok",
+                            "source": "replicate",
+                            "image": f"data:image/png;base64,{img_b64}",
+                        }
+                    )
+
+        except Exception as e:
+            logger.warning(f"⚠️ Replicate exception: {e}")
+
+    # =========================
+    # ❌ FAIL
+    # =========================
+    logger.error("❌ No AI could generate image")
+
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": "error",
+            "message": "Image generation failed (HF + Replicate)",
+        },
+    )
