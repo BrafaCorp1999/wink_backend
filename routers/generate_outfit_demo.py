@@ -1,9 +1,8 @@
-# routers/generate_outfit_demo.py
-import os   # <--- Agregar esta línea
+import os
+import time
 import base64
 import logging
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 import httpx
 
@@ -11,17 +10,14 @@ router = APIRouter()
 logger = logging.getLogger("generate_outfit_demo")
 logging.basicConfig(level=logging.INFO)
 
-# --- Stable Horde API config (no key required para uso básico) ---
-HORDE_API_KEY = "0000000000"  # clave pública para demo (modo anónimo)
-
-# --- DeepAI fallback key (requiere registro en https://deepai.org/) ---
-DEEPAI_API_KEY = os.getenv("DEEPAI_API_KEY")
+# Variables de entorno
+CLOUDFLARE_AI_TOKEN = os.getenv("CLOUDFLARE_AI_TOKEN")  # Token de Cloudflare Workers AI
+STABLE_HORDE_KEY = os.getenv("STABLE_HORDE_KEY", "0000000000")  # Key de Horde
 
 def build_prompt(gender: str) -> str:
     return (
-        f"A photorealistic full body outfit for a {gender} person. "
-        "Keep the face, body proportions and skin tone natural. "
-        "High resolution, realistic clothing."
+        f"High‑quality realistic full body outfit for a {gender} person, "
+        "keeping the face and proportions natural without distortion."
     )
 
 @router.post("/generate_outfit_demo")
@@ -29,59 +25,76 @@ async def generate_outfit_demo(payload: dict):
     gender = payload.get("gender", "person")
     prompt = build_prompt(gender)
 
-    ### 1️⃣ Stable Horde (Principal)
-    try:
-        logger.info("➡️ Trying Stable Horde free generation")
-        horde_data = {
-            "prompt": prompt,
-            "params": {
-                "sampler_name": "k_euler", 
-                "steps": 25,
-                "cfg_scale": 7.5,
-                "width": 512,
-                "height": 768
-            },
-            "runners": ["stable_diffusion"]
-        }
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(
-                "https://stablehorde.net/api/v2/generate/async",
-                headers={"apikey": HORDE_API_KEY},
-                json=horde_data
-            )
-        if response.status_code == 200:
-            result = response.json()
-            # base64 image en “img”
-            image_b64 = result.get("generations", [{}])[0].get("img")
-            if image_b64:
-                logger.info("✅ Stable Horde image generated")
-                return JSONResponse({"status": "ok", "image": image_b64})
-    except Exception as e:
-        logger.warning(f"⚠️ Stable Horde failed: {e}")
-
-    ### 2️⃣ Fallback → DeepAI (requiere API key gratuita)
-    if DEEPAI_API_KEY:
+    #########################################
+    # 1️⃣ Intentar Cloudflare Workers AI
+    #########################################
+    if CLOUDFLARE_AI_TOKEN:
         try:
-            logger.info("➡️ Trying DeepAI fallback")
-            async with httpx.AsyncClient(timeout=120) as client:
-                response = await client.post(
-                    "https://api.deepai.org/api/text2img",
-                    headers={"api-key": DEEPAI_API_KEY},
-                    data={"text": prompt}
-                )
-            if response.status_code == 200:
-                result = response.json()
-                img_url = result.get("output_url")
-                if img_url:
-                    async with httpx.AsyncClient() as client:
-                        img_resp = await client.get(img_url)
-                    img_b64 = base64.b64encode(img_resp.content).decode("utf-8")
-                    logger.info("✅ DeepAI fallback success")
-                    return JSONResponse({"status": "ok", "image": img_b64})
-        except Exception as e:
-            logger.warning(f"⚠️ DeepAI fallback failed: {e}")
+            logger.info("➡️ Trying Cloudflare Workers AI generation")
 
-    # --- Si todo falla ---
+            cf_url = f"https://api.cloudflare.com/client/v4/accounts/{{YOUR_ACCOUNT_ID}}/ai/run/@cf/stabilityai/stable-diffusion-xl-base-1.0"
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(
+                    cf_url,
+                    headers={
+                        "Authorization": f"Bearer {CLOUDFLARE_AI_TOKEN}",
+                        "Content-Type": "application/json"
+                    },
+                    json={"prompt": prompt}
+                )
+
+            # Si éxito y image base64 viene en el JSON
+            if resp.status_code == 200:
+                result = resp.json()
+                image_b64 = result.get("image_base64")
+                if image_b64:
+                    logger.info("✅ Cloudflare AI success")
+                    return JSONResponse({"status": "ok", "image": image_b64})
+        except Exception as e:
+            logger.warning(f"⚠️ Cloudflare AI failed: {e}")
+
+    #########################################
+    # 2️⃣ Intentar Stable Horde (polling)
+    #########################################
+    try:
+        logger.info("➡️ Trying Stable Horde generation (async)")
+
+        # 1) Enviar job
+        async with httpx.AsyncClient(timeout=120) as client:
+            submit_resp = await client.post(
+                "https://stablehorde.net/api/v2/generate/async",
+                headers={"apikey": STABLE_HORDE_KEY},
+                json={"prompt": prompt, "params": {"steps": 25, "width": 512, "height": 768}}
+            )
+
+        if submit_resp.status_code == 202:
+            job = submit_resp.json().get("id")
+            logger.info(f"  Job ID: {job}")
+
+            # 2) Hacer polling hasta que esté listo
+            async with httpx.AsyncClient(timeout=120) as client:
+                for _ in range(30):  # hasta ~30 polls (≈30‑40s)
+                    status_resp = await client.get(
+                        f"https://stablehorde.net/api/v2/generate/check/{job}"
+                    )
+                    status_json = status_resp.json()
+
+                    if status_json.get("done") == 1:
+                        gens = status_json.get("generations", [])
+                        if gens:
+                            img_b64 = gens[0].get("img")
+                            if img_b64:
+                                logger.info("✅ Stable Horde image ready")
+                                return JSONResponse({"status": "ok", "image": img_b64})
+                    # esperar antes de intentar de nuevo
+                    time.sleep(2)
+
+    except Exception as e:
+        logger.warning(f"⚠️ Stable Horde polling failed: {e}")
+
+    #########################################
+    # 3️⃣ Si todo falla
+    #########################################
     return JSONResponse(
         {"status": "error", "message": "No se pudo generar imagen con servicios gratuitos."},
         status_code=500
