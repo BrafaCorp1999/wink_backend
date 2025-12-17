@@ -67,13 +67,13 @@ def generate_with_hf(image_base64: str) -> str:
 # =========================
 def generate_with_replicate(image_base64: str) -> str:
     prompt = (
-        "Generate a new realistic outfit on the same person. "
-        "Do not modify face, skin, body shape or proportions. "
-        "Only change clothing. High realism, fashion photography."
+        "Generate a realistic outfit on the same person. "
+        "Do not change face, skin tone, body proportions or pose. "
+        "Only change clothing. Natural fashion photography."
     )
 
     output = replicate.run(
-        "stability-ai/sdxl",
+        "stability-ai/sdxl:2b017d8cfc9a1f0a3c7b6d4bb2b4f9b7c5f3e7e6a1cbb8d90d0d87b5d3",
         input={
             "prompt": prompt,
             "image": image_base64,
@@ -85,8 +85,9 @@ def generate_with_replicate(image_base64: str) -> str:
         raise RuntimeError("Replicate returned empty output")
 
     image_url = output[0]
-    img_bytes = requests.get(image_url).content
+    img_bytes = requests.get(image_url, timeout=60).content
     return base64.b64encode(img_bytes).decode("utf-8")
+
 
 
 # =========================
