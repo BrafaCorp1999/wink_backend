@@ -1,21 +1,18 @@
-# analyze_body_with_face.py
-from fastapi import APIRouter, HTTPException, UploadFile, Form
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from PIL import Image
 from io import BytesIO
+import base64
+import json
 
 router = APIRouter()
 
-# --- Función auxiliar para simular extracción de medidas ---
+# =========================
+# Función demo para extraer rasgos
+# =========================
 def extract_body_features(image: Image.Image, gender: str) -> dict:
-    """
-    Lógica de análisis simulada.
-    Retorna medidas y rasgos basados en la imagen (demo).
-    """
     width, height = image.size
     aspect_ratio = height / width
 
-    # Contextura simulada según proporción
     if aspect_ratio > 2.2:
         body_type = "slim"
     elif aspect_ratio < 1.6:
@@ -23,7 +20,6 @@ def extract_body_features(image: Image.Image, gender: str) -> dict:
     else:
         body_type = "average"
 
-    # Altura y peso estimados (demo)
     if gender.lower() == "male":
         height_cm = 175
         weight_kg = 70
@@ -41,28 +37,17 @@ def extract_body_features(image: Image.Image, gender: str) -> dict:
     }
 
 # =========================
-# Endpoint corregido para Flutter Multipart
+# Endpoint: analizar cuerpo + rostro
 # =========================
 @router.post("/analyze-body-with-face")
 async def analyze_body_with_face(
     gender_hint: str = Form(...),
-    person_image: UploadFile = None
+    image_file: UploadFile = File(...)
 ):
     try:
-        if person_image is None:
-            return JSONResponse(status_code=400, content={"detail": "Imagen no proporcionada"})
-
-        # Leer bytes de la imagen
-        image_bytes = await person_image.read()
+        image_bytes = await image_file.read()
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
-
-        # Extraemos rasgos del cuerpo
         features = extract_body_features(image, gender_hint)
-
-        # DEBUG: log para ver medidas y rasgos
-        print(f"✅ Rasgos extraídos: {features}")
-
-        return {"status": "ok", **features}
-
+        return {"status": "ok", "traits": features}
     except Exception as e:
-        return JSONResponse(status_code=500, content={"detail": f"Error analyzing body: {str(e)}"})
+        raise HTTPException(status_code=500, detail=f"Error analyzing body: {str(e)}")
