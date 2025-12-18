@@ -1,123 +1,82 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-import os
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi.responses import JSONResponse
+from PIL import Image
+from io import BytesIO
 import base64
-import requests
-from openai import OpenAI
+import json
 
 router = APIRouter()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-class RegisterRequest(BaseModel):
-    mode: str  # "selfie_manual" o "photo_body"
-    gender: str
-    selfie_base64: str
-    body_image_base64: str | None = None
-    height_cm: int | None = None
-    weight_kg: int | None = None
-    body_type: str | None = None
-    hair_type: str | None = None
+# =========================
+# Función para construir prompt largo
+# =========================
+def build_long_prompt(traits: dict, gender: str, style: str, prompt_type: str) -> str:
+    contextura = traits.get("body_type", "average")
+    altura = traits.get("height_cm", 170)
+    peso = traits.get("weight_kg", 65)
+    hair_type = traits.get("hair_type", "medium length, straight")
 
-# --- Prompt selfie + medidas manuales ---
-def build_prompt_selfie_manual(data: RegisterRequest) -> str:
-    return f"""
-Generate an ultra-realistic full body fashion photograph.
+    location = "a sunny outdoor park" if style == "casual" else "a modern indoor lounge"
+    outfit_style = "casual streetwear" if style == "casual" else "formal chic outfit"
+    pose = "standing casually with one hand in pocket, looking to the side" if style == "casual" else "sitting at a designer table with a calm confident expression"
 
-IMPORTANT:
-- Preserve exact facial identity from the selfie reference (90% similarity)
-- Hair fully visible and styled naturally
-- Full body including feet and shoes appropriate for outfit
-- Respect body proportions:
-    - Height: {data.height_cm or 'unknown'} cm
-    - Weight: {data.weight_kg or 'unknown'} kg
-    - Body type: {data.body_type or 'average'}
-    - Hair type: {data.hair_type or 'natural'}
-- Outfit style:
-    - Image 1: casual, modern, neutral colors, sneakers
-    - Image 2: formal, elegant, different color palette, formal shoes
-- Camera: full body shot, studio lighting, natural pose
-- Ensure the face is clearly visible and unchanged
+    # Elegir prompt según tipo de registro
+    if prompt_type == "photo_body":
+        prompt_header = "Generate a full body image from reference photo."
+    else:  # selfie_manual
+        prompt_header = "Generate a full body image using selfie + provided measurements."
+
+    prompt = f"""
+{prompt_header}
+Use 100% same face and hairstyle from the reference image.
+Highly realistic 4K image of a {contextura} {gender} with height {altura} cm and weight {peso} kg.
+Hair: {hair_type}. Pose: {pose}.
+Outfit: {outfit_style}, with shoes matching the outfit.
+Location: {location}, realistic lighting, shadows, depth of field.
+Ensure full body visible including hair and shoes.
+Negative prompt: no face change, no hairstyle modification, no body distortion, no watermark, no text overlay.
+Render in ultra-realistic digital photography style.
 """
+    return prompt
 
-# --- Prompt foto de cuerpo completo ---
-def build_prompt_photo_body(extracted_features: dict, selfie_base64: str) -> str:
-    return f"""
-Generate an ultra-realistic full body fashion photograph.
-
-IMPORTANT:
-- Preserve exact facial identity from the reference image (90% similarity)
-- Hair fully visible and styled naturally
-- Full body including feet and shoes appropriate for outfit
-- Respect extracted body measurements:
-    - Height: {extracted_features.get('height_cm', 'unknown')} cm
-    - Weight: {extracted_features.get('weight_kg', 'unknown')} kg
-    - Body type: {extracted_features.get('body_type', 'average')}
-    - Hair type: {extracted_features.get('hair_type', 'natural')}
-- Outfit style:
-    - Image 1: casual, modern, neutral colors, sneakers
-    - Image 2: formal, elegant, different color palette, formal shoes
-- Camera: full body shot, studio lighting, natural pose
-- Ensure the face is clearly visible and unchanged
-"""
-
-# --- Analiza cuerpo usando endpoint externo y loguea rasgos ---
-def analyze_body(body_base64: str, gender: str) -> dict:
-    url = "https://wink-backend-1jao.onrender.com/api/analyze-body-with-face/"
-    response = requests.post(url, json={
-        "image_base64": body_base64,
-        "gender_hint": gender
-    }, timeout=120)
-
-    if response.status_code != 200:
-        raise HTTPException(500, f"Error analyzing body: {response.text}")
-
-    decoded = response.json()
-    # Log para verificar medidas en backend/render
-    print("📊 [ANALYZE BODY] Rasgos obtenidos:", decoded)
-    return decoded
-
-# --- Endpoint principal ---
+# =========================
+# Endpoint: generar imágenes base
+# =========================
 @router.post("/register_generate_base_images")
-def register_generate_images(data: RegisterRequest):
+async def register_generate_base_images(
+    mode: str = Form(...),  # photo_body o selfie_manual
+    gender: str = Form(...),
+    body_traits: str = Form(...),
+    style: str = Form("casual"),
+    image_file: UploadFile = File(...)
+):
     try:
-        if data.mode == "selfie_manual":
-            if not data.selfie_base64:
-                raise HTTPException(400, "Selfie base64 required")
-            prompt = build_prompt_selfie_manual(data)
-            reference_images = [data.selfie_base64]
+        image_bytes = await image_file.read()
+        image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-            # Log de medidas enviadas
-            print("📊 [SELFIE MANUAL] Enviando rasgos:", {
-                "height_cm": data.height_cm,
-                "weight_kg": data.weight_kg,
-                "body_type": data.body_type,
-                "hair_type": data.hair_type
-            })
+        traits = json.loads(body_traits)
+        if not traits:
+            # fallback demo
+            traits = {
+                "height_cm": 170,
+                "weight_kg": 65,
+                "body_type": "average",
+                "hair_type": "medium length, straight"
+            }
 
-        elif data.mode == "photo_body":
-            if not data.body_image_base64:
-                raise HTTPException(400, "Body image required")
-            features = analyze_body(data.body_image_base64, data.gender)
-            prompt = build_prompt_photo_body(features, data.selfie_base64)
-            reference_images = [data.selfie_base64, data.body_image_base64]
+        # Construimos prompts largos para casual y formal
+        prompts = []
+        for st in ["casual", "formal"]:
+            prompts.append(build_long_prompt(traits, gender, st, mode))
 
-        else:
-            raise HTTPException(400, "Invalid mode")
-
-        # --- Generación de 2 imágenes (casual y formal) ---
-        result = client.images.generate(
-            model="gpt-image-1",
-            prompt=prompt,
-            size="1024x1024",
-            image=reference_images,
-            n=2
-        )
-
-        # --- Convertir a base64 limpio ---
-        images_b64 = [img.b64_json for img in result.data]
-
-        print("📩 [GENERATE OUTFITS] Se generaron", len(images_b64), "imágenes")
-        return {"status": "ok", "images": images_b64}
+        # Demo: devolvemos la misma imagen 2 veces codificada
+        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+        return JSONResponse({
+            "status": "ok",
+            "images": [image_base64, image_base64],
+            "prompts": prompts,
+            "traits": traits
+        })
 
     except Exception as e:
-        raise HTTPException(500, f"Image generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Image generation failed: {str(e)}")
