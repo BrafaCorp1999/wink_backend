@@ -11,7 +11,7 @@ router = APIRouter()
 logger = logging.getLogger("analyze_body_with_face")
 logging.basicConfig(level=logging.INFO)
 
-@router.post("/analyze-body-with-face/")
+@router.post("/analyze-body-with-face")
 async def analyze_body_with_face(
     gender_hint: str = Form(...),
     person_image: UploadFile = File(...)
