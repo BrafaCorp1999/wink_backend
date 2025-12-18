@@ -5,6 +5,7 @@ import base64
 import json
 import os
 from openai import OpenAI
+import tempfile
 
 router = APIRouter()
 
@@ -97,6 +98,9 @@ async def register_generate_base_images(
     - selfie_manual -> selfie + medidas (generación)
     """
 
+    # =========================
+    # PARSE BODY TRAITS
+    # =========================
     try:
         traits = json.loads(body_traits)
     except Exception:
@@ -124,47 +128,48 @@ async def register_generate_base_images(
         raise HTTPException(status_code=400, detail="Image file is empty")
 
     # =========================
-# GENERACIÓN DE IMÁGENES CON GPT-IMAGE-1.5
-# =========================
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    # GENERACIÓN DE IMÁGENES CON GPT-IMAGE-1.5
+    # =========================
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-try:
-    if mode == "photo_body":
-        # Image-to-image generation
-        import io, tempfile
+    try:
+        if mode == "photo_body":
+            # =========================
+            # Image-to-image generation
+            # =========================
+            with tempfile.NamedTemporaryFile(suffix=".png") as tmp_file:
+                tmp_file.write(image_bytes)
+                tmp_file.flush()
 
-        # Guardamos la imagen temporal
-        tmp_file = tempfile.NamedTemporaryFile(suffix=".png")
-        tmp_file.write(image_bytes)
-        tmp_file.flush()
+                response = client.images.edit(
+                    model="gpt-image-1.5",
+                    image=open(tmp_file.name, "rb"),
+                    prompt=final_prompt,
+                    size="1024x1024",
+                    n=2
+                )
+        else:
+            # =========================
+            # Text + body measurements -> generate from zero
+            # =========================
+            response = client.images.generate(
+                model="gpt-image-1.5",
+                prompt=final_prompt,
+                size="1024x1024",
+                n=2
+            )
 
-        response = client.images.edit(
-            model="gpt-image-1.5",
-            image=open(tmp_file.name, "rb"),
-            prompt=final_prompt,
-            size="1024x1024",
-            n=2
-        )
-    else:
-        # selfie_manual -> generación desde cero
-        response = client.images.generate(
-            model="gpt-image-1.5",
-            prompt=final_prompt,
-            size="1024x1024",
-            n=2
-        )
+        generated_images_base64 = [img.b64_json for img in response.data]
 
-    generated_images_base64 = [img.b64_json for img in response.data]
+        if not generated_images_base64:
+            raise HTTPException(status_code=500, detail="No images generated")
 
-    if not generated_images_base64:
-        raise HTTPException(status_code=500, detail="No images generated")
+        return {
+            "status": "ok",
+            "images": generated_images_base64,
+            "prompt_used": final_prompt,
+            "mode": mode
+        }
 
-    return {
-        "status": "ok",
-        "images": generated_images_base64,
-        "prompt_used": final_prompt,
-        "mode": mode
-    }
-
-except Exception as e:
-    raise HTTPException(status_code=500, detail=f"Image generation failed: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Image generation failed: {str(e)}")
