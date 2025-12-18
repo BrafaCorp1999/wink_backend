@@ -1,87 +1,112 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import base64
+from typing import Optional
 import os
 from openai import OpenAI
 
 router = APIRouter()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# =========================
+# Request model
+# =========================
 class RegisterRequest(BaseModel):
-    mode: str
+    mode: str  # "selfie_manual" | "photo_body"
     gender: str
-    selfie_base64: str
-    body_image_base64: str | None = None
-    height_cm: int | None = None
-    weight_kg: int | None = None
-    body_type: str | None = None
 
-def build_prompt_selfie_manual(data: RegisterRequest) -> str:
+    # comunes
+    body_type: Optional[str] = None
+
+    # selfie + manual
+    height_cm: Optional[int] = None
+    weight_kg: Optional[int] = None
+
+    # imágenes (NO se usan para IA aún)
+    selfie_base64: Optional[str] = None
+    body_image_base64: Optional[str] = None
+
+
+# =========================
+# PROMPTS
+# =========================
+def prompt_selfie_manual(data: RegisterRequest) -> str:
     return f"""
-Ultra realistic full body fashion photograph.
+Ultra-realistic full-body fashion photography.
 
-IMPORTANT RULES:
-- Preserve the same facial identity from the reference image
-- Do NOT change facial features
-- Natural human anatomy
+Person description:
+- Gender: {data.gender}
+- Height: {data.height_cm or 'average'} cm
+- Weight: {data.weight_kg or 'average'} kg
+- Body type: {data.body_type or 'average'}
 
-Person details:
-Gender: {data.gender}
-Height: {data.height_cm} cm
-Body type: {data.body_type}
-
-Generate a realistic full body representation consistent with these proportions.
-
-Outfit:
-Casual neutral outfit, modern style.
-
-Camera:
-Full body shot, studio lighting.
-"""
-
-def build_prompt_photo_body(data: RegisterRequest) -> str:
-    return """
-Ultra realistic full body fashion photograph.
-
-IMPORTANT RULES:
-- Preserve the same facial identity
-- Do NOT change body structure
-- Only change clothing
-
-Use the provided full body image as visual reference.
+Rules:
+- Natural human proportions
+- Realistic anatomy
+- Consistent identity across images
+- Fashion-model quality realism
 
 Outfit:
-Casual neutral outfit, modern style.
+Modern casual outfit, neutral tones, clean style.
 
 Camera:
-Same pose and angle as reference image.
+Full body shot, studio lighting, high realism.
 """
 
+
+def prompt_photo_body(data: RegisterRequest) -> str:
+    return f"""
+Ultra-realistic full-body fashion photography.
+
+Person description:
+- Gender: {data.gender}
+- Body type: {data.body_type or 'average'}
+
+Rules:
+- Maintain realistic body proportions
+- Same identity across images
+- Natural posture and anatomy
+
+Outfit:
+Modern casual outfit, neutral tones.
+
+Camera:
+Full body shot, studio lighting, realistic fashion catalog.
+"""
+
+
+# =========================
+# ENDPOINT
+# =========================
 @router.post("/register_generate_base_images")
-def register_generate_images(data: RegisterRequest):
+def register_generate_base_images(data: RegisterRequest):
+
+    # -------- validation --------
+    if data.mode not in ["selfie_manual", "photo_body"]:
+        raise HTTPException(400, "Invalid registration mode")
 
     if data.mode == "selfie_manual":
-        prompt = build_prompt_selfie_manual(data)
-        images = [data.selfie_base64]
+        if not data.selfie_base64:
+            raise HTTPException(400, "Selfie image required for selfie_manual mode")
+        prompt = prompt_selfie_manual(data)
 
     elif data.mode == "photo_body":
         if not data.body_image_base64:
-            raise HTTPException(400, "Body image required")
-        prompt = build_prompt_photo_body(data)
-        images = [data.selfie_base64, data.body_image_base64]
+            raise HTTPException(400, "Body image required for photo_body mode")
+        prompt = prompt_photo_body(data)
 
-    else:
-        raise HTTPException(400, "Invalid mode")
-
-    result = client.images.generate(
-        model="gpt-image-1",
-        prompt=prompt,
-        size="1024x1024",
-        image=images,
-        n=2
-    )
+    # -------- image generation --------
+    try:
+        result = client.images.generate(
+            model="gpt-image-1",
+            prompt=prompt,
+            size="1024x1024",
+            n=2
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Image generation failed: {str(e)}")
 
     return {
         "status": "ok",
-        "images": [img.b64_json for img in result.data]
+        "mode": data.mode,
+        "images": [img.b64_json for img in result.data],
     }
