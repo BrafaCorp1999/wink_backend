@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 # --- Routers ---
 from routers import analyze_body_with_face
 from routers import generate_outfit_demo
+from routers import register_generate_base_images
+app.include_router(register_generate_base_images.router, prefix="/api")
 
 # =========================
 # Crear app
@@ -22,6 +24,7 @@ app = FastAPI(
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 REPLICATE_API_KEY = os.getenv("REPLICATE_API_KEY")
 HF_API_KEY = os.getenv("HF_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 if GEMINI_KEY:
     print("🔹 Gemini API detected → Ready")
