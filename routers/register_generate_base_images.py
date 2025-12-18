@@ -133,7 +133,7 @@ async def register_generate_base_images(
         response = client.images.generate(
             model="gpt-image-1.5",
             prompt=final_prompt,
-            size="512x512",
+            size="auto",
             n=2
         )
 
