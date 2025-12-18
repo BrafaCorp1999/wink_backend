@@ -124,46 +124,47 @@ async def register_generate_base_images(
         raise HTTPException(status_code=400, detail="Image file is empty")
 
     # =========================
-    # GENERACIÓN DE IMÁGENES CON GPT-IMAGE-1.5
-    # =========================
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# GENERACIÓN DE IMÁGENES CON GPT-IMAGE-1.5
+# =========================
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    try:
-        # Codificar la imagen para image-to-image conditioning si es necesario
-        reference_b64 = base64.b64encode(image_bytes).decode("utf-8")
+try:
+    if mode == "photo_body":
+        # Image-to-image generation
+        import io, tempfile
 
-        if mode == "photo_body":
-            # Image-to-image generation
-            response = client.images.generate(
-                model="gpt-image-1.5",
-                prompt=final_prompt,
-                image=reference_b64,  # conditioning
-                size="1024x1024",
-                n=2  # generamos 2 imágenes
-            )
-        else:
-            # Text + selfie conditioning (selfie_manual)
-            response = client.images.generate(
-                model="gpt-image-1.5",
-                prompt=final_prompt,
-                image=reference_b64,
-                size="1024x1024",
-                n=2
-            )
+        # Guardamos la imagen temporal
+        tmp_file = tempfile.NamedTemporaryFile(suffix=".png")
+        tmp_file.write(image_bytes)
+        tmp_file.flush()
 
-        generated_images_base64 = [
-            img.b64_json for img in response.data
-        ]
+        response = client.images.edit(
+            model="gpt-image-1.5",
+            image=open(tmp_file.name, "rb"),
+            prompt=final_prompt,
+            size="1024x1024",
+            n=2
+        )
+    else:
+        # selfie_manual -> generación desde cero
+        response = client.images.generate(
+            model="gpt-image-1.5",
+            prompt=final_prompt,
+            size="1024x1024",
+            n=2
+        )
 
-        if not generated_images_base64:
-            raise HTTPException(status_code=500, detail="No images generated")
+    generated_images_base64 = [img.b64_json for img in response.data]
 
-        return {
-            "status": "ok",
-            "images": generated_images_base64,
-            "prompt_used": final_prompt,
-            "mode": mode
-        }
+    if not generated_images_base64:
+        raise HTTPException(status_code=500, detail="No images generated")
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Image generation failed: {str(e)}")
+    return {
+        "status": "ok",
+        "images": generated_images_base64,
+        "prompt_used": final_prompt,
+        "mode": mode
+    }
+
+except Exception as e:
+    raise HTTPException(status_code=500, detail=f"Image generation failed: {str(e)}")
