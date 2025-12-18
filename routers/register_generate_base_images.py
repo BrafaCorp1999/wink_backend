@@ -89,7 +89,7 @@ with realistic textures, lighting, shadows, and proportions.
 # ENDPOINT
 # =========================
 
-@router.post("/api/register_generate_base_images")
+@router.post("/register_generate_base_images")
 async def register_generate_base_images(
     mode: str = Form(...),  # "photo_body" | "selfie_manual"
     gender: str = Form(...),
