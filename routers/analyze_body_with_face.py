@@ -1,27 +1,21 @@
 # analyze_body_with_face.py
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-import base64
-from io import BytesIO
+from fastapi import APIRouter, HTTPException, UploadFile, Form
+from fastapi.responses import JSONResponse
 from PIL import Image
-import numpy as np
+from io import BytesIO
 
 router = APIRouter()
-
-class AnalyzeBodyRequest(BaseModel):
-    image_base64: str
-    gender_hint: str  # "male" o "female"
 
 # --- Función auxiliar para simular extracción de medidas ---
 def extract_body_features(image: Image.Image, gender: str) -> dict:
     """
-    Aquí iría la lógica real de análisis. 
-    Para demo, retornamos valores simulados basados en la imagen.
+    Lógica de análisis simulada.
+    Retorna medidas y rasgos basados en la imagen (demo).
     """
     width, height = image.size
     aspect_ratio = height / width
 
-    # Contextura simulada según proporción (solo demo)
+    # Contextura simulada según proporción
     if aspect_ratio > 2.2:
         body_type = "slim"
     elif aspect_ratio < 1.6:
@@ -29,7 +23,7 @@ def extract_body_features(image: Image.Image, gender: str) -> dict:
     else:
         body_type = "average"
 
-    # Altura y peso estimados (solo demo, ajustar según modelo real)
+    # Altura y peso estimados (demo)
     if gender.lower() == "male":
         height_cm = 175
         weight_kg = 70
@@ -37,7 +31,6 @@ def extract_body_features(image: Image.Image, gender: str) -> dict:
         height_cm = 165
         weight_kg = 60
 
-    # Tipo de cabello estimado (solo demo)
     hair_type = "medium length, straight"
 
     return {
@@ -48,19 +41,28 @@ def extract_body_features(image: Image.Image, gender: str) -> dict:
     }
 
 # =========================
-# Endpoint para analizar cuerpo + rostro
+# Endpoint corregido para Flutter Multipart
 # =========================
 @router.post("/analyze-body-with-face")
-def analyze_body_with_face(req: AnalyzeBodyRequest):
+async def analyze_body_with_face(
+    gender_hint: str = Form(...),
+    person_image: UploadFile = None
+):
     try:
-        # Convertimos base64 a imagen
-        image_bytes = base64.b64decode(req.image_base64)
+        if person_image is None:
+            return JSONResponse(status_code=400, content={"detail": "Imagen no proporcionada"})
+
+        # Leer bytes de la imagen
+        image_bytes = await person_image.read()
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
         # Extraemos rasgos del cuerpo
-        features = extract_body_features(image, req.gender_hint)
+        features = extract_body_features(image, gender_hint)
 
-        return features
+        # DEBUG: log para ver medidas y rasgos
+        print(f"✅ Rasgos extraídos: {features}")
+
+        return {"status": "ok", **features}
 
     except Exception as e:
-        raise HTTPException(500, f"Error analyzing body: {str(e)}")
+        return JSONResponse(status_code=500, content={"detail": f"Error analyzing body: {str(e)}"})
