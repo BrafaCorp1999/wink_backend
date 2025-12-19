@@ -5,78 +5,72 @@ import base64
 import json
 import os
 from openai import OpenAI
+from io import BytesIO
 
 router = APIRouter()
 
 # =========================
-# PROMPTS BASE
+# PROMPTS OPTIMIZADOS
 # =========================
 
 BODY_PHOTO_PROMPT = """
-Use the uploaded image strictly as a visual reference for the same real person.
+Use the uploaded full-body image strictly as a visual reference for the same real person.
 
 IDENTITY LOCK:
-- Use the image ONLY to preserve the same real person.
-- Preserve identical facial features: face shape, eyes, nose, lips, skin tone.
-- Preserve hairstyle and hair color.
-- Preserve body proportions, height, body type.
-- Do NOT alter facial structure or identity.
+- Preserve facial features: face shape, eyes, nose, lips, skin tone.
+- Maintain hairstyle and hair color.
+- Keep body proportions, height, and body type identical.
+- Do NOT alter identity.
 
 CLOTHING REPLACEMENT:
-- Replace the entire outfit.
-- Do NOT replicate original clothing.
-- New outfit, different colors and garments.
-
-OUTFIT REQUIREMENTS:
-- Modern, realistic outfit for daily wear.
-- Well-fitted top with realistic fabric.
-- Matching bottoms with natural folds.
-- Appropriate shoes clearly visible.
-- Optional subtle accessories.
+- Replace the original outfit entirely.
+- Create a new outfit with {style} style.
+- Include realistic and natural-looking clothing: top, bottoms, shoes.
+- Add subtle accessories if appropriate (e.g., watch, belt, scarf).
+- Ensure fabrics have natural folds and textures.
+- Colors can be varied but harmonious with the style.
 
 POSE & COMPOSITION:
-- Full-body shot from head to toe.
-- Natural standing pose.
-- Eye-level camera, proportional anatomy.
+- Full-body from head to toe, natural standing pose.
+- Eye-level camera angle, proportional anatomy.
+- Do NOT crop or distort body parts.
 
-ENVIRONMENT:
-- Clean indoor studio or neutral outdoor space.
-- Background must not distract from subject.
-
-LIGHTING & REALISM:
+ENVIRONMENT & LIGHTING:
+- Clean studio or neutral background.
 - Natural soft lighting, realistic shadows.
-- DSLR-style ultra-photorealistic photography.
-- No illustration or CGI.
+- DSLR-quality, photorealistic, no CGI or illustration.
+
+OUTPUT:
+- Generate 2 distinct variations of the outfit.
+- Maintain realism and the user's original proportions.
 """
 
 SELFIE_PROMPT = """
-Generate a photorealistic full-body image of a real person based on the provided selfie.
+Generate a photorealistic full-body image of a real person based on the provided selfie and body measurements.
 
-FACE REFERENCE:
-- Match facial structure, skin tone, eyes, nose, lips, hairstyle.
-- Do NOT change identity.
+IDENTITY & BODY:
+- Match facial features: face shape, eyes, nose, lips, skin tone.
+- Preserve hairstyle and color.
+- Height: {height_cm} cm, Weight: {weight_kg} kg, Body type: {body_type}.
 
-BODY CHARACTERISTICS:
-- Height: {height_cm} cm
-- Weight: {weight_kg} kg
-- Body type: {body_type}
+CLOTHING & STYLE:
+- Complete outfit in {style} style, realistic and modern.
+- Well-fitted top and bottoms with natural textures.
+- Shoes visible and appropriate for the outfit.
+- Optional subtle accessories (watch, belt, scarf).
+- Colors harmonious and suitable for the style.
 
-OUTFIT:
-- Complete modern outfit suitable for daily lifestyle.
-- Well-fitted top, complementary bottoms.
-- Appropriate footwear.
-- Subtle realistic accessories.
-
-COMPOSITION:
-- Full-body from head to toe, natural pose.
-- Eye-level camera, proportional anatomy.
-
-ENVIRONMENT:
-- Clean indoor or neutral outdoor background.
+POSE & COMPOSITION:
+- Full-body, natural standing pose.
+- Eye-level camera, correct anatomy.
+- Background clean and unobtrusive.
 
 LIGHTING & QUALITY:
-- Natural soft lighting, realistic textures, DSLR-quality.
-- Ultra-realistic, no illustration or CGI.
+- Soft, natural lighting with realistic shadows.
+- DSLR-quality, ultra-realistic, no illustrations or CGI.
+
+OUTPUT:
+- Generate 2 distinct outfit variations maintaining realism and proportions.
 """
 
 # =========================
@@ -91,12 +85,6 @@ async def register_generate_base_images(
     style: Optional[str] = Form("casual"),
     image_file: UploadFile = File(...)
 ):
-    """
-    mode:
-    - photo_body  -> imagen de cuerpo completo (transformación)
-    - selfie_manual -> selfie + medidas (generación)
-    """
-
     # Validar traits
     try:
         traits = json.loads(body_traits)
@@ -105,12 +93,13 @@ async def register_generate_base_images(
 
     # Selección de prompt
     if mode == "photo_body":
-        final_prompt = BODY_PHOTO_PROMPT
+        final_prompt = BODY_PHOTO_PROMPT.format(style=style)
     elif mode == "selfie_manual":
         final_prompt = SELFIE_PROMPT.format(
             height_cm=traits.get("height_cm", "unknown"),
             weight_kg=traits.get("weight_kg", "unknown"),
             body_type=traits.get("body_type", "average"),
+            style=style
         )
     else:
         raise HTTPException(status_code=400, detail="Invalid mode")
@@ -124,26 +113,23 @@ async def register_generate_base_images(
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     try:
-        # Generar imágenes usando la imagen como referencia si es photo_body
         if mode == "photo_body":
-            response = client.images.generate(
+            response = client.images.edit(
                 model="gpt-image-1.5",
                 prompt=final_prompt,
-                size="auto",
+                image=BytesIO(image_bytes),
                 n=2,
-                image=image_bytes  # <- referencia de imagen
+                size="1024x1024"
             )
         else:
-            # selfie_manual: solo prompt + traits
             response = client.images.generate(
                 model="gpt-image-1.5",
                 prompt=final_prompt,
-                size="auto",
-                n=2
+                n=2,
+                size="1024x1024"
             )
 
         generated_images_base64 = [img.b64_json for img in response.data]
-
         if not generated_images_base64:
             raise HTTPException(status_code=500, detail="No images generated")
 
