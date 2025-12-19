@@ -97,14 +97,13 @@ async def register_generate_base_images(
     - selfie_manual -> selfie + medidas (generación)
     """
 
+    # Validar traits
     try:
         traits = json.loads(body_traits)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid body_traits JSON")
 
-    # =========================
-    # SELECCIÓN DE PROMPT
-    # =========================
+    # Selección de prompt
     if mode == "photo_body":
         final_prompt = BODY_PHOTO_PROMPT
     elif mode == "selfie_manual":
@@ -116,26 +115,32 @@ async def register_generate_base_images(
     else:
         raise HTTPException(status_code=400, detail="Invalid mode")
 
-    # =========================
-    # LEER IMAGEN
-    # =========================
+    # Leer imagen
     image_bytes = await image_file.read()
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Image file is empty")
 
-    # =========================
-    # GENERACIÓN DE IMÁGENES CON GPT-IMAGE-1.5
-    # =========================
+    # Inicializar cliente OpenAI
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     try:
-        # Para pruebas: solo usamos prompt (no image) y tamaño 512x512
-        response = client.images.generate(
-            model="gpt-image-1.5",
-            prompt=final_prompt,
-            size="auto",
-            n=2
-        )
+        # Generar imágenes usando la imagen como referencia si es photo_body
+        if mode == "photo_body":
+            response = client.images.generate(
+                model="gpt-image-1.5",
+                prompt=final_prompt,
+                size="auto",
+                n=2,
+                image=image_bytes  # <- referencia de imagen
+            )
+        else:
+            # selfie_manual: solo prompt + traits
+            response = client.images.generate(
+                model="gpt-image-1.5",
+                prompt=final_prompt,
+                size="auto",
+                n=2
+            )
 
         generated_images_base64 = [img.b64_json for img in response.data]
 
