@@ -1,101 +1,73 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from openai import OpenAI
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from PIL import Image
 from io import BytesIO
 import json
-import os
 
 router = APIRouter()
 
 # =========================
-# PROMPT – BODY PHOTO
+# Demo extractor (mock)
 # =========================
+def extract_body_features(image: Image.Image, gender: str) -> dict:
+    width, height = image.size
+    aspect_ratio = height / width
 
-BODY_PHOTO_PROMPT = """
-Use the uploaded full-body image strictly as a visual reference for the SAME real person.
+    if aspect_ratio > 2.2:
+        body_type = "slim"
+    elif aspect_ratio < 1.6:
+        body_type = "plus"
+    else:
+        body_type = "average"
 
-IDENTITY LOCK:
-- Preserve facial features (face shape, eyes, nose, lips, skin tone).
-- Preserve hairstyle and hair color.
-- Maintain body proportions, height, and body type.
-- Do NOT alter identity or pose.
+    if gender.lower() == "male":
+        height_cm = 175
+        weight_kg = 70
+    else:
+        height_cm = 165
+        weight_kg = 60
 
-CLOTHING REPLACEMENT:
-- Replace the original outfit entirely.
-- Create a new {style} outfit.
-- Include top, bottoms, shoes.
-- Add subtle accessories if appropriate.
-- Fabrics must look realistic with natural folds.
-- Colors harmonious and modern.
-
-POSE & COMPOSITION:
-- Full-body, head to toe.
-- Natural standing pose.
-- Eye-level camera.
-- Do NOT crop or distort anatomy.
-
-LIGHTING & QUALITY:
-- Clean studio or neutral background.
-- Soft natural lighting.
-- DSLR-quality, photorealistic.
-- No illustration, no CGI.
-
-OUTPUT:
-- Generate 2 distinct outfit variations.
-"""
+    return {
+        "height_cm": height_cm,
+        "weight_kg": weight_kg,
+        "body_type": body_type,
+        "hair_type": "medium length, straight"
+    }
 
 # =========================
-# ENDPOINT
+# Endpoint: SOLO body photo
 # =========================
-
-@router.post("/generate-outfits/body-photo")
-async def generate_outfits_from_body_photo(
-    gender: str = Form(...),
-    body_traits: str = Form(...),   # JSON string desde analyze-body-with-face
-    style: str = Form("casual"),
+@router.post("/analyze-body-with-face")
+async def analyze_body_with_face(
+    gender_hint: str = Form(...),
     image_file: UploadFile = File(...)
 ):
     # -------------------------
-    # Validar traits
+    # Validar mimetype
     # -------------------------
-    try:
-        traits = json.loads(body_traits)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid body_traits JSON")
-
-    # -------------------------
-    # Leer imagen
-    # -------------------------
-    image_bytes = await image_file.read()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="Empty image file")
-
-    image_stream = BytesIO(image_bytes)
-
-    # -------------------------
-    # OpenAI
-    # -------------------------
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-    try:
-        response = client.images.edit(
-            model="gpt-image-1.5",
-            image=image_stream,
-            prompt=BODY_PHOTO_PROMPT.format(style=style),
-            n=2,
-            size="1024x1024"
+    if image_file.content_type not in (
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported image format"
         )
 
-        images_b64 = [img.b64_json for img in response.data]
+    try:
+        image_bytes = await image_file.read()
+        image = Image.open(BytesIO(image_bytes)).convert("RGB")
+
+        traits = extract_body_features(image, gender_hint)
 
         return {
             "status": "ok",
-            "images": images_b64,
-            "traits_used": traits,
-            "mode": "body_photo"
+            "traits": traits,
+            "source": "body_photo"
         }
 
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Image generation failed: {str(e)}"
+            detail=f"Error analyzing body: {str(e)}"
         )
