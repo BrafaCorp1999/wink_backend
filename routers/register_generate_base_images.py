@@ -1,5 +1,5 @@
 # routers/register_generate_base_images.py
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Form, HTTPException
 from typing import Optional
 import base64
 import json
@@ -83,15 +83,22 @@ async def register_generate_base_images(
     gender: str = Form(...),
     body_traits: str = Form(...),
     style: Optional[str] = Form("casual"),
-    image_file: UploadFile = File(...)
+    image_base64: str = Form(...)
 ):
+    """
+    Recibe la imagen codificada en Base64 y el tipo de registro.
+    """
+    # =========================
     # Validar traits
+    # =========================
     try:
         traits = json.loads(body_traits)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid body_traits JSON")
 
-    # Selección de prompt
+    # =========================
+    # Selección de prompt según modo
+    # =========================
     if mode == "photo_body":
         final_prompt = BODY_PHOTO_PROMPT.format(style=style)
     elif mode == "selfie_manual":
@@ -104,20 +111,30 @@ async def register_generate_base_images(
     else:
         raise HTTPException(status_code=400, detail="Invalid mode")
 
-    # Leer imagen
-    image_bytes = await image_file.read()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="Image file is empty")
+    # =========================
+    # Decodificar imagen
+    # =========================
+    try:
+        image_bytes = base64.b64decode(image_base64)
+        image_file = BytesIO(image_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 image: {str(e)}")
 
+    # =========================
     # Inicializar cliente OpenAI
+    # =========================
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     try:
+        # =========================
+        # photo_body: editar usando la imagen como referencia
+        # selfie_manual: generar imagen desde cero usando traits
+        # =========================
         if mode == "photo_body":
             response = client.images.edit(
                 model="gpt-image-1.5",
                 prompt=final_prompt,
-                image=BytesIO(image_bytes),
+                image=image_file,
                 n=2,
                 size="1024x1024"
             )
@@ -129,6 +146,9 @@ async def register_generate_base_images(
                 size="1024x1024"
             )
 
+        # =========================
+        # Convertir respuesta a base64
+        # =========================
         generated_images_base64 = [img.b64_json for img in response.data]
         if not generated_images_base64:
             raise HTTPException(status_code=500, detail="No images generated")
