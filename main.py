@@ -1,23 +1,15 @@
 # main.py
-import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # =========================
-# Crear app (PRIMERO SIEMPRE)
+# Crear app
 # =========================
 app = FastAPI(
     title="AI Outfit Backend",
-    version="1.0",
-    description="Backend for body analysis + outfit generation using OpenAI"
+    version="2.0",
+    description="Body analysis + AI outfit generation"
 )
-
-# =========================
-# Routers (DESPUÉS)
-# =========================
-from routers import analyze_body_with_face
-from routers import generate_outfit_demo
-from routers import register_generate_base_images
 
 # =========================
 # Middleware CORS
@@ -31,15 +23,19 @@ app.add_middleware(
 )
 
 # =========================
-# Routers include
+# Routers
 # =========================
-app.include_router(analyze_body_with_face.router, prefix="/api")
-app.include_router(generate_outfit_demo.router, prefix="/api")
-app.include_router(register_generate_base_images.router, prefix="/api")
+from routers.analyze_body_with_face import router as analyze_router
+from routers.generate_outfits_from_body_photo import router as body_photo_router
+from routers.generate_outfits_from_selfie import router as selfie_router
+
+app.include_router(analyze_router, prefix="/api")
+app.include_router(body_photo_router, prefix="/api")
+app.include_router(selfie_router, prefix="/api")
 
 # =========================
 # Health check
 # =========================
 @app.get("/")
 def root():
-    return {"message": "✅ Backend running successfully"}
+    return {"status": "ok", "message": "Backend running"}
