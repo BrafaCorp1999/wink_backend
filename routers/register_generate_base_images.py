@@ -1,81 +1,30 @@
 # routers/register_generate_base_images.py
-from fastapi import APIRouter, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from typing import Optional
-import base64
 import json
 import os
-from openai import OpenAI
 from io import BytesIO
+from openai import OpenAI
 
 router = APIRouter()
 
-# =========================
-# PROMPTS OPTIMIZADOS
-# =========================
-
 BODY_PHOTO_PROMPT = """
 Use the uploaded full-body image strictly as a visual reference for the same real person.
-
-IDENTITY LOCK:
-- Preserve facial features: face shape, eyes, nose, lips, skin tone.
-- Maintain hairstyle and hair color.
-- Keep body proportions, height, and body type identical.
-- Do NOT alter identity.
-
-CLOTHING REPLACEMENT:
-- Replace the original outfit entirely.
-- Create a new outfit with {style} style.
-- Include realistic and natural-looking clothing: top, bottoms, shoes.
-- Add subtle accessories if appropriate (e.g., watch, belt, scarf).
-- Ensure fabrics have natural folds and textures.
-- Colors can be varied but harmonious with the style.
-
-POSE & COMPOSITION:
-- Full-body from head to toe, natural standing pose.
-- Eye-level camera angle, proportional anatomy.
-- Do NOT crop or distort body parts.
-
-ENVIRONMENT & LIGHTING:
-- Clean studio or neutral background.
-- Natural soft lighting, realistic shadows.
-- DSLR-quality, photorealistic, no CGI or illustration.
-
-OUTPUT:
-- Generate 2 distinct variations of the outfit.
-- Maintain realism and the user's original proportions.
+IDENTITY LOCK: Preserve facial features, body proportions, hairstyle.
+CLOTHING REPLACEMENT: Replace outfit with {style} style, realistic clothing.
+POSE & COMPOSITION: Full-body, natural pose.
+ENVIRONMENT & LIGHTING: Clean background, realistic shadows.
+OUTPUT: Generate 2 distinct outfit variations.
 """
 
 SELFIE_PROMPT = """
-Generate a photorealistic full-body image of a real person based on the provided selfie and body measurements.
-
-IDENTITY & BODY:
-- Match facial features: face shape, eyes, nose, lips, skin tone.
-- Preserve hairstyle and color.
-- Height: {height_cm} cm, Weight: {weight_kg} kg, Body type: {body_type}.
-
-CLOTHING & STYLE:
-- Complete outfit in {style} style, realistic and modern.
-- Well-fitted top and bottoms with natural textures.
-- Shoes visible and appropriate for the outfit.
-- Optional subtle accessories (watch, belt, scarf).
-- Colors harmonious and suitable for the style.
-
-POSE & COMPOSITION:
-- Full-body, natural standing pose.
-- Eye-level camera, correct anatomy.
-- Background clean and unobtrusive.
-
-LIGHTING & QUALITY:
-- Soft, natural lighting with realistic shadows.
-- DSLR-quality, ultra-realistic, no illustrations or CGI.
-
-OUTPUT:
-- Generate 2 distinct outfit variations maintaining realism and proportions.
+Generate a photorealistic full-body image based on the provided body traits.
+Height: {height_cm} cm, Weight: {weight_kg} kg, Body type: {body_type}.
+Style: {style}, realistic clothing, shoes visible.
+OUTPUT: Generate 2 distinct outfit variations maintaining realism.
 """
 
-# =========================
-# ENDPOINT
-# =========================
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 @router.post("/register_generate_base_images")
 async def register_generate_base_images(
@@ -83,24 +32,33 @@ async def register_generate_base_images(
     gender: str = Form(...),
     body_traits: str = Form(...),
     style: Optional[str] = Form("casual"),
-    image_base64: str = Form(...)
+    image_file: Optional[UploadFile] = File(None)
 ):
     """
-    Recibe la imagen codificada en Base64 y el tipo de registro.
+    photo_body: recibe archivo real, usa images.edit
+    selfie_manual: recibe solo traits en JSON, usa images.generate
     """
-    # =========================
-    # Validar traits
-    # =========================
     try:
         traits = json.loads(body_traits)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid body_traits JSON")
 
-    # =========================
-    # Selección de prompt según modo
-    # =========================
     if mode == "photo_body":
+        if image_file is None:
+            raise HTTPException(status_code=400, detail="image_file is required for photo_body")
         final_prompt = BODY_PHOTO_PROMPT.format(style=style)
+        try:
+            image_bytes = await image_file.read()
+            response = client.images.edit(
+                model="gpt-image-1.5",
+                image=BytesIO(image_bytes),
+                prompt=final_prompt,
+                n=2,
+                size="1024x1024"
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Image edit failed: {str(e)}")
+
     elif mode == "selfie_manual":
         final_prompt = SELFIE_PROMPT.format(
             height_cm=traits.get("height_cm", "unknown"),
@@ -108,57 +66,24 @@ async def register_generate_base_images(
             body_type=traits.get("body_type", "average"),
             style=style
         )
-    else:
-        raise HTTPException(status_code=400, detail="Invalid mode")
-
-    # =========================
-    # Decodificar imagen
-    # =========================
-    try:
-        image_bytes = base64.b64decode(image_base64)
-        image_file = BytesIO(image_bytes)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid base64 image: {str(e)}")
-
-    # =========================
-    # Inicializar cliente OpenAI
-    # =========================
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-    try:
-        # =========================
-        # photo_body: editar usando la imagen como referencia
-        # selfie_manual: generar imagen desde cero usando traits
-        # =========================
-        if mode == "photo_body":
-            response = client.images.edit(
-                model="gpt-image-1.5",
-                prompt=final_prompt,
-                image=image_file,
-                n=2,
-                size="1024x1024"
-            )
-        else:
+        try:
             response = client.images.generate(
                 model="gpt-image-1.5",
                 prompt=final_prompt,
                 n=2,
                 size="1024x1024"
             )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Image generate failed: {str(e)}")
 
-        # =========================
-        # Convertir respuesta a base64
-        # =========================
-        generated_images_base64 = [img.b64_json for img in response.data]
-        if not generated_images_base64:
-            raise HTTPException(status_code=500, detail="No images generated")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid mode")
 
-        return {
-            "status": "ok",
-            "images": generated_images_base64,
-            "prompt_used": final_prompt,
-            "mode": mode
-        }
+    images_base64 = [img.b64_json for img in response.data]
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Image generation failed: {str(e)}")
+    return {
+        "status": "ok",
+        "images": images_base64,
+        "prompt_used": final_prompt,
+        "mode": mode
+    }
