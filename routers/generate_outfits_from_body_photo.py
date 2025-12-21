@@ -30,9 +30,10 @@ CLOTHING REPLACEMENT:
 - Colors harmonious and modern.
 
 POSE & COMPOSITION:
-- Full-body, head to toe.
+- Full-body, head to toe, including legs and feet.
 - Natural standing pose.
 - Eye-level camera.
+- Shoes/tennis must match outfit style.
 - Do NOT crop or distort anatomy.
 
 LIGHTING & QUALITY:
@@ -40,6 +41,9 @@ LIGHTING & QUALITY:
 - Soft natural lighting.
 - DSLR-quality, photorealistic.
 - No illustration, no CGI.
+
+OUTPUT:
+- Generate 1 outfit per request. Make multiple requests for variations.
 """
 
 # =========================
@@ -47,6 +51,10 @@ LIGHTING & QUALITY:
 # =========================
 
 def ensure_png_upload(upload: UploadFile) -> BytesIO:
+    """
+    Convierte cualquier imagen recibida a PNG válido
+    con filename y mimetype aceptados por OpenAI.
+    """
     try:
         image_bytes = upload.file.read()
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
@@ -54,8 +62,8 @@ def ensure_png_upload(upload: UploadFile) -> BytesIO:
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         buffer.seek(0)
-
         buffer.name = "input.png"
+
         return buffer
 
     except Exception as e:
@@ -71,7 +79,7 @@ def ensure_png_upload(upload: UploadFile) -> BytesIO:
 @router.post("/generate-outfits/body-photo")
 async def generate_outfits_from_body_photo(
     gender: str = Form(...),
-    body_traits: str = Form(...),
+    body_traits: str = Form(...),   # JSON string desde analyze-body-with-face
     style: str = Form("casual"),
     image_file: UploadFile = File(...)
 ):
@@ -96,20 +104,40 @@ async def generate_outfits_from_body_photo(
     images_b64: list[str] = []
 
     try:
-        # 🔁 LOOP INTERNO (NO FLUTTER)
+        # 🔁 LOOP INTERNO para generar 2 outfits distintos
         for i in range(2):
+            # Construir prompt incluyendo traits, cabello, edad si están
             variation_prompt = (
                 BODY_PHOTO_PROMPT.format(style=style)
-                + f"\n\nOUTFIT VARIATION #{i+1}: "
-                  "Make this outfit clearly different from the previous one."
+                + "\n\nUSER BODY TRAITS:\n"
+                f"- Gender: {gender}\n"
+                f"- Height: {traits.get('height_cm', 'unknown')} cm\n"
+                f"- Weight: {traits.get('weight_kg', 'unknown')} kg\n"
+                f"- Waist: {traits.get('waist_cm', 'unknown')} cm\n"
+                f"- Hips: {traits.get('hips_cm', 'unknown')} cm\n"
+                f"- Shoulders: {traits.get('shoulders_cm', 'unknown')} cm\n"
+                f"- Neck: {traits.get('neck_cm', 'unknown')} cm\n"
+                f"- Body type: {traits.get('body_type', 'average')}\n"
+            )
+
+            # Opcional: edad y tipo de cabello si vienen en traits
+            if 'age' in traits:
+                variation_prompt += f"- Age: {traits['age']}\n"
+            if 'hair_length' in traits:
+                variation_prompt += f"- Hair length: {traits['hair_length']}\n"
+            if 'hair_type' in traits:
+                variation_prompt += f"- Hair type: {traits['hair_type']}\n"
+
+            variation_prompt += (
+                f"\nOUTFIT VARIATION #{i+1}: Make this outfit clearly different from the previous one."
             )
 
             response = client.images.edit(
                 model="gpt-image-1.5",
                 image=base_image,
                 prompt=variation_prompt,
-                n=1,                    # 🔥 SIEMPRE 1
-                size="512x512"          # 🔥 MENOS CRÉDITOS
+                n=1,            # Siempre 1 por loop
+                size="512x512"  # Menor tamaño = menos créditos
             )
 
             if not response.data:
@@ -117,6 +145,9 @@ async def generate_outfits_from_body_photo(
 
             images_b64.append(response.data[0].b64_json)
 
+        # -------------------------
+        # Retornar resultado
+        # -------------------------
         return {
             "status": "ok",
             "mode": "body_photo",
