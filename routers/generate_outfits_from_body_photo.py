@@ -1,6 +1,8 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from openai import OpenAI
 from io import BytesIO
+from PIL import Image
+import base64
 import json
 import os
 
@@ -44,6 +46,34 @@ OUTPUT:
 """
 
 # =========================
+# UTIL: asegurar PNG válido
+# =========================
+
+def ensure_png_upload(upload: UploadFile) -> BytesIO:
+    """
+    Convierte cualquier imagen recibida a PNG válido
+    con filename y mimetype aceptados por OpenAI.
+    """
+    try:
+        image_bytes = upload.file.read()
+        image = Image.open(BytesIO(image_bytes)).convert("RGB")
+
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        buffer.seek(0)
+
+        # 🔥 CRÍTICO: nombre del archivo
+        buffer.name = "input.png"
+
+        return buffer
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid image file: {str(e)}"
+        )
+
+# =========================
 # ENDPOINT
 # =========================
 
@@ -63,16 +93,12 @@ async def generate_outfits_from_body_photo(
         raise HTTPException(status_code=400, detail="Invalid body_traits JSON")
 
     # -------------------------
-    # Leer imagen
+    # Preparar imagen válida
     # -------------------------
-    image_bytes = await image_file.read()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="Empty image file")
-
-    image_stream = BytesIO(image_bytes)
+    image_stream = ensure_png_upload(image_file)
 
     # -------------------------
-    # OpenAI
+    # OpenAI Client
     # -------------------------
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -87,11 +113,17 @@ async def generate_outfits_from_body_photo(
 
         images_b64 = [img.b64_json for img in response.data]
 
+        if not images_b64:
+            raise HTTPException(
+                status_code=500,
+                detail="No images generated"
+            )
+
         return {
             "status": "ok",
+            "mode": "body_photo",
             "images": images_b64,
-            "traits_used": traits,
-            "mode": "body_photo"
+            "traits_used": traits
         }
 
     except Exception as e:
