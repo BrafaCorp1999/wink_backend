@@ -40,9 +40,6 @@ LIGHTING & QUALITY:
 - Soft natural lighting.
 - DSLR-quality, photorealistic.
 - No illustration, no CGI.
-
-OUTPUT:
-- Generate 2 distinct outfit variations.
 """
 
 # =========================
@@ -50,10 +47,6 @@ OUTPUT:
 # =========================
 
 def ensure_png_upload(upload: UploadFile) -> BytesIO:
-    """
-    Convierte cualquier imagen recibida a PNG válido
-    con filename y mimetype aceptados por OpenAI.
-    """
     try:
         image_bytes = upload.file.read()
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
@@ -62,9 +55,7 @@ def ensure_png_upload(upload: UploadFile) -> BytesIO:
         image.save(buffer, format="PNG")
         buffer.seek(0)
 
-        # 🔥 CRÍTICO: nombre del archivo
         buffer.name = "input.png"
-
         return buffer
 
     except Exception as e:
@@ -80,7 +71,7 @@ def ensure_png_upload(upload: UploadFile) -> BytesIO:
 @router.post("/generate-outfits/body-photo")
 async def generate_outfits_from_body_photo(
     gender: str = Form(...),
-    body_traits: str = Form(...),   # JSON string desde analyze-body-with-face
+    body_traits: str = Form(...),
     style: str = Form("casual"),
     image_file: UploadFile = File(...)
 ):
@@ -93,31 +84,38 @@ async def generate_outfits_from_body_photo(
         raise HTTPException(status_code=400, detail="Invalid body_traits JSON")
 
     # -------------------------
-    # Preparar imagen válida
+    # Preparar imagen base
     # -------------------------
-    image_stream = ensure_png_upload(image_file)
+    base_image = ensure_png_upload(image_file)
 
     # -------------------------
     # OpenAI Client
     # -------------------------
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+    images_b64: list[str] = []
+
     try:
-        response = client.images.edit(
-            model="gpt-image-1.5",
-            image=image_stream,
-            prompt=BODY_PHOTO_PROMPT.format(style=style),
-            n=1,
-            size="1024x1024"
-        )
-
-        images_b64 = [img.b64_json for img in response.data]
-
-        if not images_b64:
-            raise HTTPException(
-                status_code=500,
-                detail="No images generated"
+        # 🔁 LOOP INTERNO (NO FLUTTER)
+        for i in range(2):
+            variation_prompt = (
+                BODY_PHOTO_PROMPT.format(style=style)
+                + f"\n\nOUTFIT VARIATION #{i+1}: "
+                  "Make this outfit clearly different from the previous one."
             )
+
+            response = client.images.edit(
+                model="gpt-image-1.5",
+                image=base_image,
+                prompt=variation_prompt,
+                n=1,                    # 🔥 SIEMPRE 1
+                size="512x512"          # 🔥 MENOS CRÉDITOS
+            )
+
+            if not response.data:
+                raise Exception("Empty image response")
+
+            images_b64.append(response.data[0].b64_json)
 
         return {
             "status": "ok",
