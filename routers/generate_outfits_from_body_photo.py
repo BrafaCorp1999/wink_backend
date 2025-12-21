@@ -107,7 +107,7 @@ async def generate_outfits_from_body_photo(
             model="gpt-image-1.5",
             image=image_stream,
             prompt=BODY_PHOTO_PROMPT.format(style=style),
-            n=2,
+            n=1,
             size="1024x1024"
         )
 
