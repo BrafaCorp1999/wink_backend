@@ -116,7 +116,7 @@ async def generate_outfits_from_selfie(
                 model="gpt-image-1.5",
                 prompt=variation_prompt,
                 n=1,               # siempre 1 imagen por iteración
-                size="512x512"     # menos créditos y separadas
+                size="1024x1024"     # menos créditos y separadas
             )
 
             if not response.data:
