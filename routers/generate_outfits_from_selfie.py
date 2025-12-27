@@ -4,6 +4,7 @@ from io import BytesIO
 import base64
 import json
 import os
+from PIL import Image
 
 router = APIRouter()
 
@@ -47,7 +48,7 @@ LIGHTING & QUALITY:
 - No illustration or CGI.
 
 OUTPUT:
-- Generate 2 distinct outfit variations.
+- Generate 1 outfit image for demo purposes.
 """
 
 # =========================
@@ -56,8 +57,6 @@ OUTPUT:
 def ensure_png_upload(upload: UploadFile) -> BytesIO:
     try:
         image_bytes = upload.file.read()
-        from PIL import Image
-        from io import BytesIO
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
         buffer = BytesIO()
@@ -96,33 +95,30 @@ async def generate_outfits_from_selfie(
     # -------------------------
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    images_b64: list[str] = []
-
     try:
-        # 🔁 LOOP INTERNO PARA 2 VARIACIONES
-        for i in range(2):
-            variation_prompt = SELFIE_PROMPT.format(
-                height_cm=traits.get("height_cm", "unknown"),
-                weight_kg=traits.get("weight_kg", "unknown"),
-                waist_cm=traits.get("waist_cm", "unknown"),
-                hips_cm=traits.get("hips_cm", "unknown"),
-                shoulders_cm=traits.get("shoulders_cm", "unknown"),
-                neck_cm=traits.get("neck_cm", "unknown"),
-                body_type=traits.get("body_type", "average"),
-                style=style
-            ) + f"\n\nOUTFIT VARIATION #{i+1}: Make this outfit clearly different from the previous one."
+        # 🔁 Solo 1 imagen para demo
+        variation_prompt = SELFIE_PROMPT.format(
+            height_cm=traits.get("height_cm", "unknown"),
+            weight_kg=traits.get("weight_kg", "unknown"),
+            waist_cm=traits.get("waist_cm", "unknown"),
+            hips_cm=traits.get("hips_cm", "unknown"),
+            shoulders_cm=traits.get("shoulders_cm", "unknown"),
+            neck_cm=traits.get("neck_cm", "unknown"),
+            body_type=traits.get("body_type", "average"),
+            style=style
+        )
 
-            response = client.images.generate(
-                model="gpt-image-1.5",
-                prompt=variation_prompt,
-                n=1,               # siempre 1 imagen por iteración
-                size="1024x1024"     # menos créditos y separadas
-            )
+        response = client.images.generate(
+            model="gpt-image-1-mini",  # modelo barato para demo
+            prompt=variation_prompt,
+            n=1,               # solo 1 imagen
+            size="512x512"     # tamaño mínimo suficiente para demo
+        )
 
-            if not response.data:
-                raise Exception("Empty image response")
+        if not response.data:
+            raise Exception("Empty image response")
 
-            images_b64.append(response.data[0].b64_json)
+        images_b64 = [response.data[0].b64_json]
 
         return {
             "status": "ok",
