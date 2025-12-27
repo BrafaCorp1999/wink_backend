@@ -12,8 +12,12 @@ router = APIRouter()
 # PROMPT – SELFIE + MEDIDAS
 # =========================
 SELFIE_PROMPT = """
-Use the provided information to generate a photorealistic full-body outfit
-for the person described below.
+Use the provided full-body selfie as reference for the SAME real person.
+
+IDENTITY LOCK:
+- Preserve facial features (face shape, eyes, nose, lips, skin tone).
+- Maintain proportions according to body traits.
+- Do NOT change pose or identity.
 
 BODY TRAITS:
 - Height: {height_cm} cm
@@ -24,14 +28,10 @@ BODY TRAITS:
 - Neck: {neck_cm} cm
 - Body type: {body_type}
 
-IDENTITY LOCK:
-- Preserve facial features from the uploaded selfie.
-- Maintain proportions according to body traits.
-- Do NOT change pose or identity.
-
 CLOTHING:
-- Generate a complete outfit including top, bottoms, and shoes.
-- Add subtle accessories if appropriate.
+- Generate a realistic full-body outfit including top, bottoms, and shoes.
+- Add subtle accessories (belt, bag, jewelry) to make the outfit distinct.
+- Use colors, patterns, and fabrics clearly different from previous outfits or the person's original outfit.
 - Fabrics must look realistic with natural folds.
 - Colors harmonious and modern.
 - Outfit should match the indicated style: {style}.
@@ -48,8 +48,10 @@ LIGHTING & QUALITY:
 - No illustration or CGI.
 
 OUTPUT:
-- Generate 1 outfit image for demo purposes.
+- Generate a single, realistic outfit.
+- Ensure the outfit looks visually distinct from any previous outfit for this person.
 """
+
 
 # =========================
 # UTIL: asegurar PNG válido
