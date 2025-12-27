@@ -12,38 +12,41 @@ router = APIRouter()
 # PROMPT – BODY PHOTO
 # =========================
 BODY_PHOTO_PROMPT = """
-Use the uploaded full-body image strictly as a visual reference for the SAME real person.
+Create a photorealistic full-body image of a real person based on the following physical traits.
 
-IDENTITY LOCK:
-- Preserve facial features (face shape, eyes, nose, lips, skin tone).
-- Preserve hairstyle and hair color.
-- Maintain body proportions, height, and body type.
-- Do NOT alter identity or pose.
+IDENTITY CONSISTENCY:
+- The person must look realistic and human.
+- Maintain consistent facial structure and skin tone.
+- Hair style and hair color must remain natural and coherent.
+- Body proportions must match the described measurements.
+- Do NOT exaggerate or stylize the body.
 
-CLOTHING REPLACEMENT:
-- Replace the original outfit entirely.
-- Generate a single, realistic full-body outfit including top, bottoms, shoes.
-- Add subtle accessories (belt, bag, jewelry) to make the outfit clearly distinct.
-- Use colors, patterns, and fabrics different from the original outfit.
-- Fabrics must look realistic with natural folds.
-- Colors harmonious and modern.
-- Outfit should match the indicated style: {style}.
+BODY & PROPORTIONS:
+- Respect height, weight, waist, hips, shoulders and body type.
+- Natural anatomy with correct limb length.
+- No deformation or unrealistic shapes.
+
+OUTFIT:
+- Generate a modern, realistic outfit including top, bottoms and shoes.
+- Outfit must match the style: {style}.
+- Use harmonious colors and realistic fabrics.
+- Clothing must fit naturally to the body.
+- Optional subtle accessories (belt, bag, watch).
 
 POSE & COMPOSITION:
-- Full-body, head to toe including legs and feet.
+- Full-body view, head to toe.
 - Natural standing pose.
 - Eye-level camera.
-- Do NOT crop or distort anatomy.
+- Centered composition.
 
 LIGHTING & QUALITY:
-- Clean studio or neutral background.
+- Neutral or studio background.
 - Soft natural lighting.
 - DSLR-quality, photorealistic.
-- No illustration or CGI.
+- No illustration, no CGI, no anime.
 
 OUTPUT:
-- Generate a single, realistic outfit.
-- Make sure this outfit is visually distinct from any previous outfit for this person.
+- One single realistic full-body image.
 """
 
 # =========================
@@ -112,12 +115,11 @@ async def generate_outfits_from_body_photo(
         if 'hair_type' in traits:
             variation_prompt += f"- Hair type: {traits['hair_type']}\n"
 
-        response = client.images.edit(
-            model="gpt-image-1-mini",  # modelo barato
-            image=base_image,
-            prompt=variation_prompt,
-            n=1,               # solo 1 imagen demo
-            size="512x512"     # tamaño mínimo suficiente
+        response = client.images.generate(
+        model="gpt-image-1-mini",
+        prompt=variation_prompt,
+        n=1,
+        size="512x512"
         )
 
         if not response.data:
