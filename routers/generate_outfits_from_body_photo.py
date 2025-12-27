@@ -137,7 +137,7 @@ async def generate_outfits_from_body_photo(
                 image=base_image,
                 prompt=variation_prompt,
                 n=1,            # Siempre 1 por loop
-                size="512x512"  # Menor tamaño = menos créditos
+                size="1024x1024"  # Menor tamaño = menos créditos
             )
 
             if not response.data:
