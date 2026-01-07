@@ -1,49 +1,24 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from PIL import Image
 from io import BytesIO
-import json
+
+from services.body_analysis_service import extract_body_features
 
 router = APIRouter()
 
-# =========================
-# Demo extractor (mock)
-# =========================
-def extract_body_features(image: Image.Image, gender: str) -> dict:
-    width, height = image.size
-    aspect_ratio = height / width
+def normalize_gender(value: str) -> str:
+    value = value.lower().strip()
+    if value in ("male", "man", "hombre"):
+        return "male"
+    if value in ("female", "woman", "mujer"):
+        return "female"
+    return "female"
 
-    if aspect_ratio > 2.2:
-        body_type = "slim"
-    elif aspect_ratio < 1.6:
-        body_type = "plus"
-    else:
-        body_type = "average"
-
-    if gender.lower() == "male":
-        height_cm = 175
-        weight_kg = 70
-    else:
-        height_cm = 165
-        weight_kg = 60
-
-    return {
-        "height_cm": height_cm,
-        "weight_kg": weight_kg,
-        "body_type": body_type,
-        "hair_type": "medium length, straight"
-    }
-
-# =========================
-# Endpoint: SOLO body photo
-# =========================
 @router.post("/analyze-body-with-face")
 async def analyze_body_with_face(
     gender_hint: str = Form(...),
     image_file: UploadFile = File(...)
 ):
-    # -------------------------
-    # Validar mimetype
-    # -------------------------
     if image_file.content_type not in (
         "image/jpeg",
         "image/png",
@@ -55,10 +30,16 @@ async def analyze_body_with_face(
         )
 
     try:
+        gender = normalize_gender(gender_hint)
+
         image_bytes = await image_file.read()
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-        traits = extract_body_features(image, gender_hint)
+        MAX_SIZE = 1024
+        if max(image.size) > MAX_SIZE:
+            image.thumbnail((MAX_SIZE, MAX_SIZE))
+
+        traits = extract_body_features(image, gender)
 
         return {
             "status": "ok",
