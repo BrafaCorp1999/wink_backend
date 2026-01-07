@@ -1,10 +1,8 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from fastapi import UploadFile
 from typing import List
 from openai import OpenAI
 from io import BytesIO
 from PIL import Image
-import base64
 import json
 import os
 
@@ -26,12 +24,12 @@ def ensure_png_upload(upload: UploadFile) -> BytesIO:
         raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
 
 # =========================
-# Endpoint flexible
+# Endpoint: combinar prendas manteniendo identidad
 # =========================
 @router.post("/generate-outfit/combine-clothes-flex")
 async def generate_outfit_combine_clothes_flex(
     gender: str = Form(...),
-    body_traits: str = Form(...),
+    body_traits: str = Form(...),  # JSON con medidas
     style: str = Form("casual"),
     base_image_file: UploadFile = File(...),
     clothes_files: List[UploadFile] = File(...),
@@ -85,17 +83,22 @@ CLOTHING COMBINATION:
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     try:
-        response = client.images.generate(
+        # -------------------------
+        # Usar .edit para mantener identidad
+        # -------------------------
+        response = client.images.edit(
             model="gpt-image-1-mini",
+            image=base_image,
             prompt=prompt,
             n=1,
             size="512x512"
+            # mask=None -> opcional si quieres reemplazar solo ropa
         )
 
         if not response.data:
             raise Exception("Empty image response")
 
-        images_b64 = [response.data[0].b64_json]
+        images_b64 = [img.b64_json for img in response.data]
 
         return {
             "status": "ok",
