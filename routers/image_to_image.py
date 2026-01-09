@@ -4,50 +4,55 @@ from io import BytesIO
 from PIL import Image
 import json
 import os
+import uuid
+import logging
 
 router = APIRouter()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+logging.basicConfig(level=logging.INFO)
 
 # =========================
-# PROMPT – IMAGE TO IMAGE (OPTIMIZADO)
+# PROMPT BLOQUEADO (IDENTIDAD)
 # =========================
 IMAGE_TO_IMAGE_PROMPT = """
-Use the provided image as reference for the SAME real person.
+You MUST use the provided image as reference for the SAME real person.
 
-IDENTITY LOCK:
+IDENTITY LOCK (STRICT):
 - Preserve face, hairstyle, skin tone and body proportions.
+- Do NOT change age, ethnicity or body shape.
 
-CLOTHING:
-- Change ONLY the outfit.
+CLOTHING CHANGE ONLY:
 - Style: {style}
 - Occasion: {occasion}
 - Climate: {climate}
 - Preferred colors: {colors}
-- Clothing must fit naturally and look realistic.
 
-BODY:
+BODY REFERENCE:
 - Height: {height_cm} cm
 - Weight: {weight_kg} kg
 - Body type: {body_type}
 
-POSE & QUALITY:
-- Full-body, head to feet.
-- Natural standing pose.
-- Photorealistic.
-- No illustration or CGI.
+RENDER RULES:
+- Full-body (head to feet)
+- Natural standing pose
+- Photorealistic
+- High quality fashion photo
+- NO illustration, NO CGI
 """
 
 # =========================
-# Normalizar traits
+# NORMALIZAR TRAITS
 # =========================
 def normalize_traits(traits: dict, gender: str) -> dict:
     return {
         "height_cm": traits.get("height_cm") or (175 if gender == "male" else 165),
         "weight_kg": traits.get("weight_kg") or (70 if gender == "male" else 60),
-        "body_type": traits.get("body_type", "average"),
+        "body_type": traits.get("body_type") or "average",
     }
 
 # =========================
-# Asegurar PNG
+# ASEGURAR PNG
 # =========================
 def ensure_png_upload(upload: UploadFile) -> BytesIO:
     try:
@@ -59,13 +64,13 @@ def ensure_png_upload(upload: UploadFile) -> BytesIO:
         buffer.name = "base.png"
         return buffer
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
 # =========================
-# ENDPOINT
+# ENDPOINT SEGURO
 # =========================
-@router.post("/generate-outfit/image-to-image")
-async def generate_outfit_image_to_image(
+@router.post("/ai/generate-outfit-from-form")
+async def generate_outfit_from_form(
     gender: str = Form(...),
     body_traits: str = Form(...),
     style: str = Form("casual"),
@@ -74,6 +79,10 @@ async def generate_outfit_image_to_image(
     colors: str = Form("neutral"),
     base_image_file: UploadFile = File(...)
 ):
+    request_id = str(uuid.uuid4())
+    logging.info(f"[AI-FORM] Request {request_id} started")
+
+    # -------- Parse traits
     try:
         raw_traits = json.loads(body_traits)
     except Exception:
@@ -81,7 +90,7 @@ async def generate_outfit_image_to_image(
 
     traits = normalize_traits(raw_traits, gender)
 
-    # Colores
+    # -------- Colors
     try:
         colors_list = json.loads(colors)
         colors_str = ", ".join(colors_list) if colors_list else "neutral tones"
@@ -100,26 +109,30 @@ async def generate_outfit_image_to_image(
         body_type=traits["body_type"],
     )
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
     try:
         response = client.images.edit(
             model="gpt-image-1-mini",
             image=base_image,
             prompt=prompt,
-            n=1,
+            n=1,                     # 🔒 HARD LIMIT
             size="512x512"
         )
 
-        if not response.data:
+        if not response.data or not response.data[0].b64_json:
             raise Exception("Empty image response")
+
+        logging.info(f"[AI-FORM] Request {request_id} SUCCESS")
 
         return {
             "status": "ok",
-            "mode": "image_to_image",
-            "images": [response.data[0].b64_json],
+            "request_id": request_id,
+            "image": response.data[0].b64_json,  # 👈 SOLO UNA
             "traits_used": traits
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Image-to-image failed: {str(e)}")
+        logging.error(f"[AI-FORM] Request {request_id} FAILED: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Outfit generation failed"
+        )
