@@ -5,8 +5,13 @@ from io import BytesIO
 from PIL import Image
 import json
 import os
+import uuid
+import logging
 
 router = APIRouter()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+logging.basicConfig(level=logging.INFO)
 
 # =========================
 # Helper: asegurar PNG
@@ -24,17 +29,20 @@ def ensure_png_upload(upload: UploadFile) -> BytesIO:
         raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
 
 # =========================
-# Endpoint: combinar prendas manteniendo identidad
+# ENDPOINT: COMBINAR PRENDAS
 # =========================
-@router.post("/generate-outfit/combine-clothes-flex")
-async def generate_outfit_combine_clothes_flex(
+@router.post("/ai/combine-clothes")
+async def combine_clothes(
     gender: str = Form(...),
-    body_traits: str = Form(...),  # JSON con medidas
+    body_traits: str = Form(...),
     style: str = Form("casual"),
     base_image_file: UploadFile = File(...),
     clothes_files: List[UploadFile] = File(...),
-    clothes_categories: str = Form(...)  # JSON array: ["top", "bottom", "shoes"]
+    clothes_categories: str = Form(...)
 ):
+    request_id = str(uuid.uuid4())
+    logging.info(f"[COMBINE] Request {request_id} started")
+
     # -------------------------
     # Validar traits
     # -------------------------
@@ -48,8 +56,13 @@ async def generate_outfit_combine_clothes_flex(
     # -------------------------
     try:
         categories = json.loads(clothes_categories)
+        if not isinstance(categories, list):
+            raise Exception()
         if len(categories) != len(clothes_files):
-            raise HTTPException(status_code=400, detail="Mismatch between categories and files")
+            raise HTTPException(
+                status_code=400,
+                detail="Categories count must match clothes files"
+            )
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid clothes_categories JSON")
 
@@ -60,52 +73,63 @@ async def generate_outfit_combine_clothes_flex(
     clothes_images = [ensure_png_upload(f) for f in clothes_files]
 
     # -------------------------
-    # Construir prompt dinámico
+    # Prompt bloqueado
     # -------------------------
-    items_text = "\n".join([f"{i+1}. {cat}" for i, cat in enumerate(categories)])
+    items_text = "\n".join(
+        [f"- {cat} (use uploaded image exactly)" for cat in categories]
+    )
+
     prompt = f"""
-Use the provided base image as reference for the SAME person.
+Use the FIRST image as reference for the SAME person.
 
-IDENTITY LOCK:
-- Preserve facial features and body proportions.
+IDENTITY LOCK (STRICT):
+- Preserve face, hairstyle, skin tone, body proportions.
+- Do NOT change age or ethnicity.
 
-CLOTHING COMBINATION:
-- Combine the following uploaded clothing items into a coherent outfit:
+CLOTHING COMBINATION (STRICT):
+- Use ONLY the uploaded clothing images listed below.
+- Do NOT invent new clothes.
+- Fit the clothes naturally on the body.
+- Style target: {style}
+
+UPLOADED ITEMS:
 {items_text}
-- Outfit should match the indicated style: {style}.
-- Ensure clothes fit naturally on the body.
-- Optional subtle accessories allowed.
+
+OUTPUT RULES:
+- Full body (head to feet)
+- Natural standing pose
+- Photorealistic fashion photo
+- High quality
 """
 
     # -------------------------
-    # OpenAI Client
+    # Llamada OpenAI (MULTI-IMAGE)
     # -------------------------
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
     try:
-        # -------------------------
-        # Usar .edit para mantener identidad
-        # -------------------------
         response = client.images.edit(
             model="gpt-image-1-mini",
-            image=base_image,
+            image=[base_image, *clothes_images],  # 👈 CLAVE
             prompt=prompt,
             n=1,
             size="512x512"
-            # mask=None -> opcional si quieres reemplazar solo ropa
         )
 
-        if not response.data:
+        if not response.data or not response.data[0].b64_json:
             raise Exception("Empty image response")
 
-        images_b64 = [img.b64_json for img in response.data]
+        logging.info(f"[COMBINE] Request {request_id} SUCCESS")
 
         return {
             "status": "ok",
-            "images": images_b64,
-            "traits_used": traits,
-            "categories_used": categories
+            "request_id": request_id,
+            "image": response.data[0].b64_json,
+            "categories_used": categories,
+            "traits_used": traits
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Combine clothes failed: {str(e)}")
+        logging.error(f"[COMBINE] Request {request_id} FAILED: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Combine clothes generation failed"
+        )
