@@ -31,7 +31,7 @@ CLOTHING:
 - Outfit must be visually different from original clothing.
 - Use modern colors, realistic fabrics and natural folds.
 - Add subtle accessories if appropriate.
-- Match style: {style}.
+- Chose a random style casual/modern/elegant.
 
 POSE & COMPOSITION:
 - Full-body, head to feet.
@@ -42,6 +42,7 @@ POSE & COMPOSITION:
 LIGHTING & QUALITY:
 - Soft natural lighting.
 - Photorealistic.
+- Try to match the place with the style seleted not more realistic but with some details that seems to be in a place.
 - No illustration, no CGI.
 
 OUTPUT:
@@ -83,35 +84,40 @@ def ensure_png_upload(upload: UploadFile) -> BytesIO:
 # =========================
 @router.post("/generate-outfits/selfie")
 async def generate_outfits_from_selfie(
+    user_id: str = Form(...),
     gender: str = Form(...),
     body_traits: str = Form(...),
     style: str = Form("casual"),
     selfie_file: UploadFile = File(...)
 ):
+    import uuid
+    request_id = str(uuid.uuid4())
+    print(f"[IMAGE_GEN_START][SELFIE] {request_id}")
+
+    # check_limit(user_id)
+
     try:
         raw_traits = json.loads(body_traits)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid body_traits JSON")
 
     traits = normalize_traits(raw_traits, gender)
-
-    # Preparar imagen
     base_image = ensure_png_upload(selfie_file)
 
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    try:
-        prompt = SELFIE_PROMPT.format(
-            height_cm=traits["height_cm"],
-            weight_kg=traits["weight_kg"],
-            waist_cm=traits["waist_cm"],
-            hips_cm=traits["hips_cm"],
-            shoulders_cm=traits["shoulders_cm"],
-            neck_cm=traits["neck_cm"],
-            body_type=traits["body_type"],
-            style=style
-        )
+    prompt = SELFIE_PROMPT.format(
+        height_cm=traits["height_cm"],
+        weight_kg=traits["weight_kg"],
+        waist_cm=traits["waist_cm"],
+        hips_cm=traits["hips_cm"],
+        shoulders_cm=traits["shoulders_cm"],
+        neck_cm=traits["neck_cm"],
+        body_type=traits["body_type"],
+        style=style
+    )
 
+    try:
         response = client.images.generate(
             model="gpt-image-1-mini",
             prompt=prompt,
@@ -120,18 +126,17 @@ async def generate_outfits_from_selfie(
             size="512x512"
         )
 
-        if not response.data:
+        if not response.data or not response.data[0].b64_json:
             raise Exception("Empty image response")
+
+        print(f"[IMAGE_GEN_END][SELFIE] {request_id}")
 
         return {
             "status": "ok",
             "mode": "selfie_manual",
-            "images": [response.data[0].b64_json],
+            "image": response.data[0].b64_json,
             "traits_used": traits
         }
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Image generation failed: {str(e)}"
-        )
+        raise HTTPException(500, detail=str(e))
