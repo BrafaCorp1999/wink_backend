@@ -28,7 +28,7 @@ BODY & PROPORTIONS:
 
 OUTFIT:
 - Generate a modern, realistic outfit including top, bottoms and shoes.
-- Outfit must match the style: {style}.
+- Outfit must match a random casual/modern or elegant style.
 - Use harmonious colors and realistic fabrics.
 - Clothing must fit naturally to the body.
 - Optional subtle accessories (belt, bag, watch).
@@ -40,7 +40,7 @@ POSE & COMPOSITION:
 - Centered composition.
 
 LIGHTING & QUALITY:
-- Neutral or studio background.
+- Neutral or studio background that matches with the style taken.
 - Soft natural lighting.
 - DSLR-quality, photorealistic.
 - No illustration, no CGI, no anime.
@@ -90,62 +90,35 @@ async def ensure_png_upload(upload: UploadFile) -> BytesIO:
 # =========================
 @router.post("/generate-outfits/body-photo")
 async def generate_outfits_from_body_photo(
+    user_id: str = Form(...),
     gender: str = Form(...),
-    body_traits: str = Form(...),   # JSON string desde analyze-body-with-face
+    body_traits: str = Form(...),
     style: str = Form("casual"),
     image_file: UploadFile = File(...)
 ):
-    # -------------------------
-    # Validar traits
-    # -------------------------
+    import uuid
+    request_id = str(uuid.uuid4())
+    print(f"[IMAGE_GEN_START][BODY] {request_id}")
+
+    # check_limit(user_id)
+
     try:
         traits = json.loads(body_traits)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid body_traits JSON")
 
     gender = normalize_gender(gender)
-
-    # -------------------------
-    # Imagen base
-    # -------------------------
     base_image = await ensure_png_upload(image_file)
 
-    # -------------------------
-    # OpenAI Client
-    # -------------------------
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    # -------------------------
-    # Variación leve (anti-duplicados)
-    # -------------------------
-    variation_seed = random.choice([
-        "slightly different pose",
-        "different neutral background",
-        "subtle lighting variation",
-        "minor outfit variation"
-    ])
+    variation_prompt = BODY_PHOTO_PROMPT.format(style=style) + f"""
+    Gender: {gender}
+    Height: {traits.get('height_cm')}
+    Weight: {traits.get('weight_kg')}
+    Body type: {traits.get('body_type')}
+    """
 
-    # -------------------------
-    # Prompt final
-    # -------------------------
-    variation_prompt = (
-        BODY_PHOTO_PROMPT.format(style=style)
-        + "\n\nUSER BODY TRAITS:\n"
-        f"- Gender: {gender}\n"
-        f"- Height: {traits.get('height_cm', 'unknown')} cm\n"
-        f"- Weight: {traits.get('weight_kg', 'unknown')} kg\n"
-        f"- Waist: {traits.get('waist_cm', 'unknown')} cm\n"
-        f"- Hips: {traits.get('hips_cm', 'unknown')} cm\n"
-        f"- Shoulders: {traits.get('shoulders_cm', 'unknown')} cm\n"
-        f"- Neck: {traits.get('neck_cm', 'unknown')} cm\n"
-        f"- Body type: {traits.get('body_type', 'average')}\n"
-        f"- Hair type: {traits.get('hair_type', 'natural')}\n"
-        f"\nVARIATION NOTE: {variation_seed}\n"
-    )
-
-    # -------------------------
-    # Generación
-    # -------------------------
     try:
         response = client.images.generate(
             model="gpt-image-1-mini",
@@ -154,18 +127,18 @@ async def generate_outfits_from_body_photo(
             size="512x512"
         )
 
-        if not response.data:
+        if not response.data or not response.data[0].b64_json:
             raise Exception("Empty image response")
+
+        print(f"[IMAGE_GEN_END][BODY] {request_id}")
 
         return {
             "status": "ok",
             "mode": "body_photo",
-            "images": [response.data[0].b64_json],
+            "image": response.data[0].b64_json,
             "traits_used": traits
         }
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Image generation failed: {str(e)}"
-        )
+        raise HTTPException(500, detail=str(e))
+
