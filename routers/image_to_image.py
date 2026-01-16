@@ -28,6 +28,9 @@ CLOTHING CHANGE ONLY:
 - Climate: {climate}
 - Preferred colors: {colors}
 
+LIGHTING AND PLACE:
+- Put the person in a relax place, not with more things but with some related with her/his outfit
+
 BODY REFERENCE:
 - Height: {height_cm} cm
 - Weight: {weight_kg} kg
