@@ -29,6 +29,35 @@ def ensure_png_upload(upload: UploadFile) -> BytesIO:
         raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
 
 # =========================
+# Helper: validar traits
+# =========================
+def parse_traits(traits_json: str) -> dict:
+    try:
+        traits = json.loads(traits_json)
+        if not isinstance(traits, dict):
+            raise Exception()
+        return traits
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid body_traits JSON")
+
+# =========================
+# Helper: validar categorías
+# =========================
+def parse_categories(categories_json: str, clothes_files: List[UploadFile]) -> List[str]:
+    try:
+        categories = json.loads(categories_json)
+        if not isinstance(categories, list):
+            raise Exception()
+        if len(categories) != len(clothes_files):
+            raise HTTPException(
+                status_code=400,
+                detail="Categories count must match clothes files"
+            )
+        return categories
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid clothes_categories JSON")
+
+# =========================
 # ENDPOINT: COMBINAR PRENDAS
 # =========================
 @router.post("/ai/combine-clothes")
@@ -44,27 +73,13 @@ async def combine_clothes(
     logging.info(f"[COMBINE] Request {request_id} started")
 
     # -------------------------
-    # Validar traits
+    # Parse traits y categorías
     # -------------------------
-    try:
-        traits = json.loads(body_traits)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid body_traits JSON")
+    traits = parse_traits(body_traits)
+    categories = parse_categories(clothes_categories, clothes_files)
 
-    # -------------------------
-    # Validar categorías
-    # -------------------------
-    try:
-        categories = json.loads(clothes_categories)
-        if not isinstance(categories, list):
-            raise Exception()
-        if len(categories) != len(clothes_files):
-            raise HTTPException(
-                status_code=400,
-                detail="Categories count must match clothes files"
-            )
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid clothes_categories JSON")
+    logging.info(f"[COMBINE] Traits received: {traits}")
+    logging.info(f"[COMBINE] Categories received: {categories}")
 
     # -------------------------
     # Preparar imágenes
@@ -75,9 +90,7 @@ async def combine_clothes(
     # -------------------------
     # Prompt bloqueado
     # -------------------------
-    items_text = "\n".join(
-        [f"- {cat} (use uploaded image exactly)" for cat in categories]
-    )
+    items_text = "\n".join([f"- {cat} (use uploaded image exactly)" for cat in categories])
 
     prompt = f"""
 Use the FIRST image as reference for the SAME person.
@@ -85,6 +98,9 @@ Use the FIRST image as reference for the SAME person.
 IDENTITY LOCK (STRICT):
 - Preserve face, hairstyle, skin tone, body proportions.
 - Do NOT change age or ethnicity.
+
+LIGHTING AND PLACE
+- The person could be in a relax place, simply but not in transparent colors/place.
 
 CLOTHING COMBINATION (STRICT):
 - Use ONLY the uploaded clothing images listed below.
@@ -100,6 +116,8 @@ OUTPUT RULES:
 - Natural standing pose
 - Photorealistic fashion photo
 - High quality
+- No illustration, no CGI
+- Only one final image
 """
 
     # -------------------------
@@ -108,7 +126,7 @@ OUTPUT RULES:
     try:
         response = client.images.edit(
             model="gpt-image-1-mini",
-            image=[base_image, *clothes_images],  # 👈 CLAVE
+            image=[base_image, *clothes_images],
             prompt=prompt,
             n=1,
             size="512x512"
