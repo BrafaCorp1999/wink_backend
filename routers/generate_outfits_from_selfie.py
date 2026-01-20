@@ -8,76 +8,86 @@ from PIL import Image
 router = APIRouter()
 
 # =========================
-# PROMPT – SELFIE + MEDIDAS
+# PROMPT – SELFIE + MANUAL DATA
 # =========================
 SELFIE_PROMPT = """
-Use the provided full-body selfie as reference for the SAME real person.
+Use the provided selfie image as the PRIMARY visual reference of the SAME real person.
 
-IDENTITY LOCK:
-- Preserve facial features, skin tone, hairstyle and proportions.
-- Do NOT change identity, face shape or body structure.
+IDENTITY LOCK (CRITICAL):
+- Preserve the exact facial features, face shape, skin tone and expression.
+- Do NOT beautify, stylize or modify the face.
+- Keep hairstyle and hair color consistent.
+- Body proportions must remain realistic and natural.
 
-BODY TRAITS:
-- Height: {height_cm} cm
-- Weight: {weight_kg} kg
-- Waist: {waist_cm}
-- Hips: {hips_cm}
-- Shoulders: {shoulders_cm}
-- Neck: {neck_cm}
-- Body type: {body_type}
+BODY CONSISTENCY:
+- Respect the person's natural body structure.
+- Do NOT exaggerate curves, muscles or height.
+- Measurements are only a soft guideline, NOT a replacement of the image.
 
-CLOTHING:
-- Generate a realistic full-body outfit (top, bottoms, shoes).
-- Outfit must be visually different from original clothing.
-- Use modern colors, realistic fabrics and natural folds.
-- Add subtle accessories if appropriate.
-- Chose a random style casual/modern/elegant.
+OUTFIT:
+- Generate a realistic, modern outfit suitable for everyday fashion.
+- Style should feel trendy but natural (not extreme, not runway).
+- Outfit must be different from the original clothing.
+- Use realistic fabrics, natural folds and correct fitting.
+- Colors should be harmonious and fashionable.
+- Optional minimal accessories (small bag, watch, belt).
 
-POSE & COMPOSITION:
-- Full-body, head to feet.
-- Natural standing pose.
-- Eye-level camera.
-- No cropping or distortion.
+POSE & EXPRESSION:
+- Full-body view, head to toe.
+- Light fashion-model pose:
+  - Relaxed posture
+  - Subtle weight shift
+  - Arms naturally positioned (not hanging stiffly)
+- Natural, calm expression.
+
+ENVIRONMENT:
+- Soft, realistic outdoor or lifestyle background.
+- Examples: park, garden, urban green area, relaxed public space.
+- Background must be lightly blurred and subtle.
+- Do NOT dominate the image.
 
 LIGHTING & QUALITY:
-- Soft natural lighting.
-- Photorealistic.
-- Try to match the place with the style seleted not more realistic but with some details that seems to be in a place.
-- No illustration, no CGI.
+- Soft natural daylight.
+- Photorealistic DSLR quality.
+- No CGI, no illustration, no anime.
 
 OUTPUT:
-- Generate exactly ONE realistic outfit image.
+- Generate exactly ONE photorealistic full-body image.
 """
 
 # =========================
-# UTIL: normalizar traits
+# NORMALIZE TRAITS (SOFT ONLY)
 # =========================
 def normalize_traits(traits: dict, gender: str) -> dict:
     return {
-        "height_cm": traits.get("height_cm") or (175 if gender == "male" else 165),
-        "weight_kg": traits.get("weight_kg") or (70 if gender == "male" else 60),
-        "waist_cm": traits.get("waist_cm", "unknown"),
-        "hips_cm": traits.get("hips_cm", "unknown"),
-        "shoulders_cm": traits.get("shoulders_cm", "unknown"),
-        "neck_cm": traits.get("neck_cm", "unknown"),
+        "height_cm": traits.get("height_cm"),
+        "weight_kg": traits.get("weight_kg"),
         "body_type": traits.get("body_type", "average"),
     }
 
 # =========================
-# UTIL: asegurar PNG válido
+# UTIL: ensure PNG (ASYNC + SAFE)
 # =========================
-def ensure_png_upload(upload: UploadFile) -> BytesIO:
+async def ensure_png_upload(upload: UploadFile) -> BytesIO:
     try:
-        image_bytes = upload.file.read()
+        image_bytes = await upload.read()
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
+
+        MAX_SIZE = 1024
+        if max(image.size) > MAX_SIZE:
+            image.thumbnail((MAX_SIZE, MAX_SIZE))
 
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         buffer.seek(0)
         buffer.name = "selfie.png"
         return buffer
+
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid image file: {str(e)}"
+        )
 
 # =========================
 # ENDPOINT
@@ -87,14 +97,12 @@ async def generate_outfits_from_selfie(
     user_id: str = Form(...),
     gender: str = Form(...),
     body_traits: str = Form(...),
-    style: str = Form("casual"),
+    style: str = Form("modern"),
     selfie_file: UploadFile = File(...)
 ):
     import uuid
     request_id = str(uuid.uuid4())
     print(f"[IMAGE_GEN_START][SELFIE] {request_id}")
-
-    # check_limit(user_id)
 
     try:
         raw_traits = json.loads(body_traits)
@@ -102,25 +110,14 @@ async def generate_outfits_from_selfie(
         raise HTTPException(status_code=400, detail="Invalid body_traits JSON")
 
     traits = normalize_traits(raw_traits, gender)
-    base_image = ensure_png_upload(selfie_file)
+    base_image = await ensure_png_upload(selfie_file)
 
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-    prompt = SELFIE_PROMPT.format(
-        height_cm=traits["height_cm"],
-        weight_kg=traits["weight_kg"],
-        waist_cm=traits["waist_cm"],
-        hips_cm=traits["hips_cm"],
-        shoulders_cm=traits["shoulders_cm"],
-        neck_cm=traits["neck_cm"],
-        body_type=traits["body_type"],
-        style=style
-    )
 
     try:
         response = client.images.generate(
             model="gpt-image-1-mini",
-            prompt=prompt,
+            prompt=SELFIE_PROMPT,
             image=base_image,
             n=1,
             size="512x512"
@@ -139,4 +136,4 @@ async def generate_outfits_from_selfie(
         }
 
     except Exception as e:
-        raise HTTPException(500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
