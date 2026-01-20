@@ -4,45 +4,49 @@ from io import BytesIO
 from PIL import Image
 import json
 import os
-import random
+import uuid
 
 router = APIRouter()
 
 # =========================
-# PROMPT – BODY PHOTO (NO TOCADO)
+# PROMPT – BODY PHOTO (CLONADO CORPORAL)
 # =========================
 BODY_PHOTO_PROMPT = """
-Create a photorealistic full-body image of a real person based on the following physical traits.
+You are editing a real photograph of a real person for a fashion application.
 
-IDENTITY CONSISTENCY:
-- The person must look realistic and human.
-- Maintain consistent facial structure and skin tone.
-- Hair style and hair color must remain natural and coherent.
-- Body proportions must match the described measurements.
-- Do NOT exaggerate or stylize the body.
+CRITICAL – DO NOT CHANGE THE PERSON:
+- The body must remain EXACTLY the same as in the original image.
+- Do NOT change body proportions, size, height, weight, or measurements.
+- Do NOT slim, widen, lengthen, shorten, or stylize the body.
+- Do NOT modify posture significantly.
+- Do NOT modify facial features, face shape, expression, or identity.
+- Do NOT change skin tone or physical traits.
 
-BODY & PROPORTIONS:
-- Respect height, weight, waist, hips, shoulders and body type.
-- Natural anatomy with correct limb length.
-- No deformation or unrealistic shapes.
+POSE:
+- Keep a subtle fashion modeling posture.
+- Natural and relaxed stance.
+- Slightly confident posture, minimal arm movement.
+- No dramatic or exaggerated pose.
 
-OUTFIT:
-- Generate a modern, realistic outfit including top, bottoms and shoes.
-- Outfit must match a random casual/modern or elegant style.
-- Use harmonious colors and realistic fabrics.
-- Clothing must fit naturally to the body.
-- Optional subtle accessories (belt, bag, watch).
+OUTFIT REPLACEMENT (VERY IMPORTANT):
+- Replace the outfit with a SIMILAR outfit type to the original.
+- Maintain the same clothing category:
+  - If the person wears jeans → generate jeans.
+  - If the person wears a dress → generate a dress.
+  - If the person wears sneakers → generate sneakers.
+- Only change colors, textures, or minor design details.
+- Clothing must fit the body naturally and realistically.
+- No extreme fashion, no costume, no runway looks.
 
-POSE & COMPOSITION:
-- Full-body view, head to toe.
-- Natural standing pose.
-- Eye-level camera.
-- Centered composition.
+BACKGROUND:
+- Softly blurred, relaxed environment (park, garden, calm urban area).
+- Background must NOT be empty.
+- Background must NOT distract from the person.
 
 LIGHTING & QUALITY:
-- Neutral or studio background that matches with the style taken.
-- Soft natural lighting.
-- DSLR-quality, photorealistic.
+- Natural soft lighting.
+- Photorealistic.
+- DSLR-quality photo.
 - No illustration, no CGI, no anime.
 
 OUTPUT:
@@ -61,14 +65,13 @@ def normalize_gender(value: str) -> str:
     return "female"
 
 # =========================
-# UTIL: asegurar PNG válido (ASYNC + LIMIT)
+# UTIL: asegurar PNG válido
 # =========================
 async def ensure_png_upload(upload: UploadFile) -> BytesIO:
     try:
         image_bytes = await upload.read()
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-        # Limitar tamaño (clave para iPhone)
         MAX_SIZE = 1024
         if max(image.size) > MAX_SIZE:
             image.thumbnail((MAX_SIZE, MAX_SIZE))
@@ -86,7 +89,7 @@ async def ensure_png_upload(upload: UploadFile) -> BytesIO:
         )
 
 # =========================
-# ENDPOINT
+# ENDPOINT – BODY PHOTO REGISTRATION
 # =========================
 @router.post("/generate-outfits/body-photo")
 async def generate_outfits_from_body_photo(
@@ -96,11 +99,8 @@ async def generate_outfits_from_body_photo(
     style: str = Form("casual"),
     image_file: UploadFile = File(...)
 ):
-    import uuid
     request_id = str(uuid.uuid4())
     print(f"[IMAGE_GEN_START][BODY] {request_id}")
-
-    # check_limit(user_id)
 
     try:
         traits = json.loads(body_traits)
@@ -112,18 +112,17 @@ async def generate_outfits_from_body_photo(
 
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    variation_prompt = BODY_PHOTO_PROMPT.format(style=style) + f"""
-    Gender: {gender}
-    Height: {traits.get('height_cm')}
-    Weight: {traits.get('weight_kg')}
-    Body type: {traits.get('body_type')}
-    """
+    final_prompt = BODY_PHOTO_PROMPT + f"""
+Additional context:
+- Gender: {gender}
+- Style preference: {style}
+"""
 
     try:
-        response = client.images.generate(
-            model="gpt-image-1-mini",
-            prompt=variation_prompt,
-            n=1,
+        response = client.images.edits(
+            model="gpt-image-1",
+            image=base_image,
+            prompt=final_prompt,
             size="512x512"
         )
 
@@ -140,5 +139,4 @@ async def generate_outfits_from_body_photo(
         }
 
     except Exception as e:
-        raise HTTPException(500, detail=str(e))
-
+        raise HTTPException(status_code=500, detail=str(e))
