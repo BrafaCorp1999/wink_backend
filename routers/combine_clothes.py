@@ -93,31 +93,44 @@ async def combine_clothes(
     items_text = "\n".join([f"- {cat} (use uploaded image exactly)" for cat in categories])
 
     prompt = f"""
-Use the FIRST image as reference for the SAME person.
+Use the FIRST image as the SAME person reference.
 
-IDENTITY LOCK (STRICT):
-- Preserve face, hairstyle, skin tone, body proportions.
-- Do NOT change age or ethnicity.
+IDENTITY & BODY LOCK (STRICT, NON-NEGOTIABLE):
+- Preserve the exact face, hairstyle, skin tone, body shape, body size and proportions.
+- Do NOT change body volume, curves, height, weight, muscles or posture.
+- Do NOT slim, enlarge or stylize the body.
+- The person must look exactly the same as the base image.
 
-LIGHTING AND PLACE
-- The person could be in a relax place, simply but not in transparent colors/place.
+CLOTHING REPLACEMENT ONLY:
+- ONLY change the clothes.
+- Fit the clothes naturally over the existing body.
+- Respect natural folds, gravity and fabric behavior.
 
-CLOTHING COMBINATION (STRICT):
-- Use ONLY the uploaded clothing images listed below.
-- Do NOT invent new clothes.
-- Fit the clothes naturally on the body.
-- Style target: {style}
+CLOTHING RULES (STRICT):
+- Use ONLY the uploaded clothing images.
+- Do NOT invent clothes, colors or textures.
+- Do NOT add accessories.
+- Do NOT remove underwear visibility if originally hidden.
 
-UPLOADED ITEMS:
-{items_text}
+STYLE TARGET:
+- {style}
+- Clean, realistic fashion photography.
 
-OUTPUT RULES:
+SCENE & LIGHTING:
+- Neutral background
+- Soft natural lighting
+- No strong shadows
+- No transparent or fantasy environments
+
+POSE & FRAMING:
 - Full body (head to feet)
-- Natural standing pose
-- Photorealistic fashion photo
-- High quality
-- No illustration, no CGI
-- Only one final image
+- Neutral standing pose
+- Camera at human eye level
+
+OUTPUT:
+- One single final image
+- Ultra realistic
+- No illustration, no CGI, no 3D, no painting
 """
 
     # -------------------------
