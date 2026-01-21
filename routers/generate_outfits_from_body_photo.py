@@ -12,31 +12,15 @@ router = APIRouter()
 # PROMPT – BODY PHOTO (CLONADO CORPORAL)
 # =========================
 BODY_PHOTO_PROMPT_MODERADO = """
-You are editing a real photograph of a person for a fashion application.
+You are editing a fashion reference photo.
 
-IMPORTANT:
-- Preserve the person's body exactly as in the original image.
-- Do not alter height, weight, body proportions, or measurements.
-- Keep facial features, expression, and identity unchanged.
-- Maintain natural skin tone and physical traits.
+Preserve the person’s overall body shape, proportions, and facial structure.
+Do not exaggerate or stylize the face or body.
 
-POSE:
-- Natural and relaxed stance, minimal movement.
-- Subtle fashion pose only.
+Replace the outfit with a similar clothing category.
+Ensure realistic fit and natural appearance.
 
-OUTFIT:
-- Replace the outfit with a similar one of the same type.
-- Adjust colors or small design details only.
-- Clothes must fit naturally and realistically.
-- Avoid extreme fashion or costumes.
-
-BACKGROUND & LIGHTING:
-- Soft, relaxed environment (park, garden, calm urban area).
-- Natural lighting, photorealistic.
-- No illustrations, anime, CGI, or fantasy elements.
-
-OUTPUT:
-- One realistic full-body image with the new outfit, maintaining the person's identity and body.
+Maintain a neutral, realistic photographic style.
 """
 
 # =========================
@@ -100,8 +84,7 @@ async def generate_outfits_from_body_photo(
 
     final_prompt = BODY_PHOTO_PROMPT + f"""
 Additional context:
-- Gender: {gender}
-- Style preference: {style}
+- Place: put the person in a similar place as the original image
 """
 
     try:
