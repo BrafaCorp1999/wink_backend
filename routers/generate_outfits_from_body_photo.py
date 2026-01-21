@@ -119,7 +119,7 @@ Additional context:
 """
 
     try:
-        response = client.images.edits(
+        response = client.images.edit(
             model="gpt-image-1",
             image=base_image,
             prompt=final_prompt,
