@@ -38,8 +38,7 @@ LIGHTING & QUALITY:
 - No illustrations, CGI, anime, or unrealistic edits.
 
 OUTPUT:
-- One realistic full-body image with updated outfit, preserving the person's identity.
-"""e realistic full-body image, ready for fashion visualization.
+- One realistic full-body image with ready for fashion visualization.
 """
 
 # =========================
