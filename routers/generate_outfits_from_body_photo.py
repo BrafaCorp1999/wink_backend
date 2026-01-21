@@ -11,16 +11,32 @@ router = APIRouter()
 # =========================
 # PROMPT – BODY PHOTO (CLONADO CORPORAL)
 # =========================
-BODY_PHOTO_PROMPT = """
-Change the person's outfit in this photo.
+BODY_PHOTO_PROMPT_MODERADO = """
+You are editing a real photograph of a person for a fashion application.
 
-- Do NOT change the person's face or identity.
-- Keep the body natural; minor posture adjustments are OK.
-- Replace the clothes with a similar outfit type (same category).
-- Only adjust colors, textures, or small details.
-- Clothes must look natural and realistic.
-- Background and lighting should be simple and soft.
-- Output one realistic full-body image.
+IMPORTANT:
+- Preserve the person's body exactly as in the original image.
+- Do not alter height, weight, body proportions, or measurements.
+- Keep facial features, expression, and identity unchanged.
+- Maintain natural skin tone and physical traits.
+
+POSE:
+- Natural and relaxed stance, minimal movement.
+- Subtle fashion pose only.
+
+OUTFIT:
+- Replace the outfit with a similar one of the same type.
+- Adjust colors or small design details only.
+- Clothes must fit naturally and realistically.
+- Avoid extreme fashion or costumes.
+
+BACKGROUND & LIGHTING:
+- Soft, relaxed environment (park, garden, calm urban area).
+- Natural lighting, photorealistic.
+- No illustrations, anime, CGI, or fantasy elements.
+
+OUTPUT:
+- One realistic full-body image with the new outfit, maintaining the person's identity and body.
 """
 
 # =========================
