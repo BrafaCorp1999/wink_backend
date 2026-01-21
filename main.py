@@ -23,7 +23,7 @@ app.add_middleware(
 from routers.analyze_body_with_face import router as analyze_router
 from routers.generate_outfits_from_body_photo import router as body_photo_router
 from routers.generate_outfits_from_selfie import router as selfie_router
-from routers.generate_outfit_image_to_image import router as image_to_image_router
+from routers.image_to_image import router as image_to_image_router
 
 app.include_router(analyze_router, prefix="/api")
 app.include_router(body_photo_router, prefix="/api")
