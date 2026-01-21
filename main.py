@@ -9,13 +9,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost",
-        "http://localhost:3000",
-        "https://*.web.app",
-        "https://*.firebaseapp.com",
-    ],
-    allow_credentials=False,
+    allow_origins=["*"],  # Permite cualquier origen
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
