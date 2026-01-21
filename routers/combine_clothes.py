@@ -9,24 +9,41 @@ import uuid
 import logging
 
 router = APIRouter()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# -------------------------
+# OpenAI client (safe init)
+# -------------------------
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise RuntimeError("OPENAI_API_KEY is not set")
+
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 logging.basicConfig(level=logging.INFO)
 
 # =========================
-# Helper: asegurar PNG
+# Helper: asegurar PNG (ASYNC SAFE)
 # =========================
-def ensure_png_upload(upload: UploadFile) -> BytesIO:
+async def ensure_png_upload(upload: UploadFile) -> BytesIO:
     try:
-        image_bytes = upload.file.read()
+        image_bytes = await upload.read()
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
+
+        MAX_SIZE = 1024
+        if max(image.size) > MAX_SIZE:
+            image.thumbnail((MAX_SIZE, MAX_SIZE))
+
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         buffer.seek(0)
         buffer.name = upload.filename or "input.png"
         return buffer
+
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid image file: {str(e)}"
+        )
 
 # =========================
 # Helper: validar traits
@@ -38,24 +55,38 @@ def parse_traits(traits_json: str) -> dict:
             raise Exception()
         return traits
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid body_traits JSON")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid body_traits JSON"
+        )
 
 # =========================
 # Helper: validar categorías
 # =========================
-def parse_categories(categories_json: str, clothes_files: List[UploadFile]) -> List[str]:
+def parse_categories(
+    categories_json: str,
+    clothes_files: List[UploadFile]
+) -> List[str]:
     try:
         categories = json.loads(categories_json)
         if not isinstance(categories, list):
             raise Exception()
+
         if len(categories) != len(clothes_files):
             raise HTTPException(
                 status_code=400,
                 detail="Categories count must match clothes files"
             )
+
         return categories
+
+    except HTTPException:
+        raise
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid clothes_categories JSON")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid clothes_categories JSON"
+        )
 
 # =========================
 # ENDPOINT: COMBINAR PRENDAS
@@ -72,25 +103,35 @@ async def combine_clothes(
     request_id = str(uuid.uuid4())
     logging.info(f"[COMBINE] Request {request_id} started")
 
+    if not clothes_files:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one clothing image is required"
+        )
+
     # -------------------------
     # Parse traits y categorías
     # -------------------------
     traits = parse_traits(body_traits)
     categories = parse_categories(clothes_categories, clothes_files)
 
-    logging.info(f"[COMBINE] Traits received: {traits}")
-    logging.info(f"[COMBINE] Categories received: {categories}")
+    logging.info(f"[COMBINE] Traits: {traits}")
+    logging.info(f"[COMBINE] Categories: {categories}")
 
     # -------------------------
     # Preparar imágenes
     # -------------------------
-    base_image = ensure_png_upload(base_image_file)
-    clothes_images = [ensure_png_upload(f) for f in clothes_files]
+    base_image = await ensure_png_upload(base_image_file)
+    clothes_images = [
+        await ensure_png_upload(f) for f in clothes_files
+    ]
 
     # -------------------------
-    # Prompt bloqueado
+    # Prompt (NO MODIFICADO)
     # -------------------------
-    items_text = "\n".join([f"- {cat} (use uploaded image exactly)" for cat in categories])
+    items_text = "\n".join(
+        [f"- {cat} (use uploaded image exactly)" for cat in categories]
+    )
 
     prompt = f"""
 Use the FIRST image as the SAME person reference.
