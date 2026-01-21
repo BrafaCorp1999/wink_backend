@@ -14,43 +14,37 @@ router = APIRouter()
 BODY_PHOTO_PROMPT = """
 You are editing a real photograph of a real person for a fashion application.
 
-CRITICAL – DO NOT CHANGE THE PERSON:
-- The body must remain EXACTLY the same as in the original image.
-- Do NOT change body proportions, size, height, weight, or measurements.
-- Do NOT slim, widen, lengthen, shorten, or stylize the body.
-- Do NOT modify posture significantly.
-- Do NOT modify facial features, face shape, expression, or identity.
-- Do NOT change skin tone or physical traits.
+PERSON PRESERVATION – DO NOT CHANGE:
+- Keep the person's body exactly as in the original photo.
+- Do NOT change height, weight, body proportions, or measurements.
+- Do NOT modify posture, facial features, face shape, or identity.
+- Keep skin tone and physical traits unchanged.
 
 POSE:
-- Keep a subtle fashion modeling posture.
-- Natural and relaxed stance.
-- Slightly confident posture, minimal arm movement.
-- No dramatic or exaggerated pose.
+- Natural, relaxed, and subtle fashion pose.
+- Minimal arm movement, slight confident stance.
+- Avoid dramatic or exaggerated poses.
 
-OUTFIT REPLACEMENT (VERY IMPORTANT):
-- Replace the outfit with a SIMILAR outfit type to the original.
-- Maintain the same clothing category:
-  - If the person wears jeans → generate jeans.
-  - If the person wears a dress → generate a dress.
-  - If the person wears sneakers → generate sneakers.
-- Only change colors, textures, or minor design details.
-- Clothing must fit the body naturally and realistically.
-- No extreme fashion, no costume, no runway looks.
+OUTFIT REPLACEMENT:
+- Replace the outfit with a similar type to the original.
+- Maintain the same clothing category (e.g., jeans, dress, sneakers).
+- Adjust colors, textures, or minor design details only.
+- Clothes must fit the body naturally and realistically.
+- Avoid extreme fashion, costumes, or fantasy elements.
 
 BACKGROUND:
-- Softly blurred, relaxed environment (park, garden, calm urban area).
-- Background must NOT be empty.
-- Background must NOT distract from the person.
+- Soft, relaxed environment (park, garden, calm urban area).
+- Background should not be empty or distracting.
+- Keep focus on the person.
 
 LIGHTING & QUALITY:
-- Natural soft lighting.
-- Photorealistic.
-- DSLR-quality photo.
-- No illustration, no CGI, no anime.
+- Natural, soft lighting.
+- Photorealistic full-body image.
+- High-quality, DSLR-like photo.
+- No illustrations, CGI, anime, or unrealistic edits.
 
 OUTPUT:
-- One single realistic full-body image.
+- One single realistic full-body image, ready for fashion visualization.
 """
 
 # =========================
