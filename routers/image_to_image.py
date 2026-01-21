@@ -134,7 +134,7 @@ async def generate_outfit_from_form(
             image=base_image,
             prompt=prompt,
             n=1,                     # SOLO UNA IMAGEN
-            size="512x512"
+            size="auto"
         )
 
         if not response.data or not response.data[0].b64_json:
