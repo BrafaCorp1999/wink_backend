@@ -123,7 +123,7 @@ Additional context:
             model="gpt-image-1",
             image=base_image,
             prompt=final_prompt,
-            size="512x512"
+            size="auto"
         )
 
         if not response.data or not response.data[0].b64_json:
