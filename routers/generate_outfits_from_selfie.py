@@ -120,7 +120,7 @@ async def generate_outfits_from_selfie(
             prompt=SELFIE_PROMPT,
             image=base_image,
             n=1,
-            size="512x512"
+            size="auto"
         )
 
         if not response.data or not response.data[0].b64_json:
