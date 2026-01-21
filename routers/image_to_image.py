@@ -8,9 +8,13 @@ import uuid
 import logging
 
 router = APIRouter()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
 logging.basicConfig(level=logging.INFO)
+
+# -------------------------
+# OpenAI client (SAFE INIT)
+# -------------------------
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # =========================
 # PROMPT BLOQUEADO (IDENTIDAD)
@@ -49,28 +53,34 @@ RENDER RULES:
 # =========================
 def normalize_traits(traits: dict, gender: str) -> dict:
     return {
-        "height_cm": traits.get("height_cm") or (175 if gender == "male" else 165),
-        "weight_kg": traits.get("weight_kg") or (70 if gender == "male" else 60),
+        "height_cm": traits.get("height_cm") or (175 if gender.lower() == "male" else 165),
+        "weight_kg": traits.get("weight_kg") or (70 if gender.lower() == "male" else 60),
         "body_type": traits.get("body_type") or "average",
     }
 
 # =========================
-# ASEGURAR PNG
+# ASEGURAR PNG (ASYNC SAFE)
 # =========================
-def ensure_png_upload(upload: UploadFile) -> BytesIO:
+async def ensure_png_upload(upload: UploadFile) -> BytesIO:
     try:
-        image_bytes = upload.file.read()
+        image_bytes = await upload.read()
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
+
+        MAX_SIZE = 1024
+        if max(image.size) > MAX_SIZE:
+            image.thumbnail((MAX_SIZE, MAX_SIZE))
+
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         buffer.seek(0)
-        buffer.name = "base.png"
+        buffer.name = upload.filename or "base.png"
         return buffer
+
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
 # =========================
-# ENDPOINT SEGURO
+# ENDPOINT GENERATE OUTFIT
 # =========================
 @router.post("/ai/generate-outfit-from-form")
 async def generate_outfit_from_form(
@@ -82,6 +92,9 @@ async def generate_outfit_from_form(
     colors: str = Form("neutral"),
     base_image_file: UploadFile = File(...)
 ):
+    if not client:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+
     request_id = str(uuid.uuid4())
     logging.info(f"[AI-FORM] Request {request_id} started")
 
@@ -100,8 +113,10 @@ async def generate_outfit_from_form(
     except Exception:
         colors_str = "neutral tones"
 
-    base_image = ensure_png_upload(base_image_file)
+    # -------- Prepare image
+    base_image = await ensure_png_upload(base_image_file)
 
+    # -------- Prompt (tu original intacto)
     prompt = IMAGE_TO_IMAGE_PROMPT.format(
         style=style,
         occasion=occasion,
@@ -112,12 +127,13 @@ async def generate_outfit_from_form(
         body_type=traits["body_type"],
     )
 
+    # -------- Llamada OpenAI
     try:
         response = client.images.edit(
             model="gpt-image-1-mini",
             image=base_image,
             prompt=prompt,
-            n=1,                     # 🔒 HARD LIMIT
+            n=1,                     # SOLO UNA IMAGEN
             size="512x512"
         )
 
@@ -129,13 +145,10 @@ async def generate_outfit_from_form(
         return {
             "status": "ok",
             "request_id": request_id,
-            "image": response.data[0].b64_json,  # 👈 SOLO UNA
+            "image": response.data[0].b64_json,
             "traits_used": traits
         }
 
     except Exception as e:
         logging.error(f"[AI-FORM] Request {request_id} FAILED: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Outfit generation failed"
-        )
+        raise HTTPException(status_code=500, detail="Outfit generation failed")
