@@ -183,7 +183,7 @@ OUTPUT:
             image=[base_image, *clothes_images],
             prompt=prompt,
             n=1,
-            size="512x512"
+            size="auto"
         )
 
         if not response.data or not response.data[0].b64_json:
