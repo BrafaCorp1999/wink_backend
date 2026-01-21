@@ -9,11 +9,15 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,  # 👈 CLAVE
+    allow_origins=[
+        "http://localhost:56304",      # localhost pruebas
+        "https://tu-demo.web.app",    # Firebase Hosting
+    ],
+    allow_credentials=True,  # 🔹 necesario para Firebase Auth
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 from routers.analyze_body_with_face import router as analyze_router
 from routers.generate_outfits_from_body_photo import router as body_photo_router
