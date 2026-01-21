@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from PIL import Image
 from io import BytesIO
 
-from services.body_analysis_service import extract_body_features
+from utils.body_analysis_service import extract_body_features
 
 router = APIRouter()
 
