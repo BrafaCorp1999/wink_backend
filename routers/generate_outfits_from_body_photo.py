@@ -12,30 +12,24 @@ router = APIRouter()
 # PROMPT – BODY PHOTO (CLONADO CORPORAL)
 # =========================
 BODY_PHOTO_PROMPT = """
-You are editing a real photograph of a real person for a fashion application.
+Edit this photo to change the person's outfit for a fashion application.
 
-PERSON PRESERVATION – DO NOT CHANGE:
-- Keep the person's body exactly as in the original photo.
-- Do NOT change height, weight, body proportions, or measurements.
-- Do NOT modify posture, facial features, face shape, or identity.
-- Keep skin tone and physical traits unchanged.
-
-POSE:
-- Natural, relaxed, and subtle fashion pose.
-- Minimal arm movement, slight confident stance.
-- Avoid dramatic or exaggerated poses.
+IMPORTANT – PRESERVE THE PERSON:
+- Keep the face unchanged.
+- Do not modify facial features, expression, or identity.
+- Keep overall body shape natural; minor posture adjustments are acceptable.
+- Avoid extreme edits to skin tone or physical traits.
 
 OUTFIT REPLACEMENT:
 - Replace the outfit with a similar type to the original.
 - Maintain the same clothing category (e.g., jeans, dress, sneakers).
 - Adjust colors, textures, or minor design details only.
-- Clothes must fit the body naturally and realistically.
-- Avoid extreme fashion, costumes, or fantasy elements.
+- Clothes should fit naturally and realistically.
+- Avoid fantasy, costume, or exaggerated fashion.
 
 BACKGROUND:
-- Soft, relaxed environment (park, garden, calm urban area).
-- Background should not be empty or distracting.
-- Keep focus on the person.
+- Keep a simple, relaxed environment (park, garden, calm urban area).
+- Background should not distract from the person.
 
 LIGHTING & QUALITY:
 - Natural, soft lighting.
@@ -44,7 +38,8 @@ LIGHTING & QUALITY:
 - No illustrations, CGI, anime, or unrealistic edits.
 
 OUTPUT:
-- One single realistic full-body image, ready for fashion visualization.
+- One realistic full-body image with updated outfit, preserving the person's identity.
+"""e realistic full-body image, ready for fashion visualization.
 """
 
 # =========================
