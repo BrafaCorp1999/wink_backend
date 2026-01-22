@@ -1,8 +1,9 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, HTTPException, Form, UploadFile, File
 from typing import List
 from openai import OpenAI
 from io import BytesIO
 from PIL import Image
+import base64
 import json
 import os
 import uuid
@@ -10,95 +11,71 @@ import logging
 
 router = APIRouter()
 
-# -------------------------
-# OpenAI client (safe init)
-# -------------------------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY is not set")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
-
 logging.basicConfig(level=logging.INFO)
 
 # =========================
-# Helper: asegurar PNG (ASYNC SAFE)
+# Helper: decode uploaded file
 # =========================
-async def ensure_png_upload(upload: UploadFile) -> BytesIO:
+def decode_file(file: UploadFile) -> BytesIO:
     try:
-        image_bytes = await upload.read()
-        image = Image.open(BytesIO(image_bytes)).convert("RGB")
-
+        content = file.file.read()
+        image = Image.open(BytesIO(content)).convert("RGB")
         MAX_SIZE = 1024
         if max(image.size) > MAX_SIZE:
             image.thumbnail((MAX_SIZE, MAX_SIZE))
-
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         buffer.seek(0)
-        buffer.name = upload.filename or "input.png"
         return buffer
-
     except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid image file: {str(e)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
 
 # =========================
-# Helper: validar traits
+# Helper: translate categories
 # =========================
-def parse_traits(traits_json: str) -> dict:
-    try:
-        traits = json.loads(traits_json)
-        if not isinstance(traits, dict):
-            raise Exception()
-        return traits
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid body_traits JSON"
-        )
+CATEGORY_MAP = {
+    "zapatos": "shoes",
+    "blusas": "blouse",
+    "chamarras": "jacket",
+    "vestidos": "dress",
+    "camisas": "shirt",
+    "pantalones": "pants",
+    "poleras": "t-shirt",
+    "accesorios": "accessories",
+}
+
+def translate_categories(categories: List[str]) -> List[str]:
+    return [CATEGORY_MAP.get(c.lower(), c.lower()) for c in categories]
 
 # =========================
-# Helper: validar categorías y cantidad de prendas
+# Helper: parse categories
 # =========================
-def parse_categories(
-    categories_json: str,
-    clothes_files: List[UploadFile]
-) -> List[str]:
+def parse_categories(categories_json: str) -> List[str]:
     try:
         categories = json.loads(categories_json)
         if not isinstance(categories, list):
             raise Exception()
-
-        if len(categories) != len(clothes_files):
+        if len(categories) > 2:
             raise HTTPException(
                 status_code=400,
-                detail="Categories count must match clothes files"
+                detail="You can only replace up to 2 clothing items"
             )
-
-        if not (1 <= len(categories) <= 3):
-            raise HTTPException(
-                status_code=400,
-                detail="You can only replace 1 or 3 clothing items"
-            )
-
         return categories
-
     except HTTPException:
         raise
     except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid clothes_categories JSON"
-        )
+        raise HTTPException(status_code=400, detail="Invalid clothes_categories JSON")
 
 # =========================
-# ENDPOINT: COMBINAR PRENDAS
+# ENDPOINT MOBILE: COMBINAR PRENDAS
 # =========================
 @router.post("/ai/combine-clothes")
-async def combine_clothes(
+async def combine_clothes_mobile(
     gender: str = Form(...),
     body_traits: str = Form(...),
     style: str = Form("casual"),
@@ -107,34 +84,23 @@ async def combine_clothes(
     clothes_categories: str = Form(...)
 ):
     request_id = str(uuid.uuid4())
-    logging.info(f"[COMBINE] Request {request_id} started")
+    logging.info(f"[COMBINE-MOBILE] Request {request_id} started")
 
-    if not clothes_files:
+    categories = parse_categories(clothes_categories)
+    categories_en = translate_categories(categories)
+
+    if len(categories) != len(clothes_files):
         raise HTTPException(
             status_code=400,
-            detail="At least one clothing image is required"
+            detail="Number of categories must match number of clothing images"
         )
 
-    # -------------------------
-    # Parse traits y categorías
-    # -------------------------
-    traits = parse_traits(body_traits)
-    categories = parse_categories(clothes_categories, clothes_files)
+    # Decodificar imágenes
+    base_image = decode_file(base_image_file)
+    clothes_images = [decode_file(f) for f in clothes_files]
 
-    logging.info(f"[COMBINE] Traits: {traits}")
-    logging.info(f"[COMBINE] Categories: {categories}")
-
-    # -------------------------
-    # Preparar imágenes
-    # -------------------------
-    base_image = await ensure_png_upload(base_image_file)
-    clothes_images = [await ensure_png_upload(f) for f in clothes_files]
-
-    # -------------------------
-    # Prompt dinámico según prendas seleccionadas
-    # -------------------------
-    items_text = "\n".join([f"- {cat} (use uploaded image exactly)" for cat in categories])
-
+    # Construir prompt
+    items_text = "\n".join([f"- {cat} (use uploaded image exactly)" for cat in categories_en])
     prompt = f"""
 Use the FIRST image as the SAME person reference.
 
@@ -154,7 +120,6 @@ CLOTHING RULES (STRICT):
 - Use ONLY the uploaded clothing images.
 - Do NOT invent clothes, colors or textures.
 - Do NOT add accessories.
-- Do NOT remove underwear visibility if originally hidden.
 
 STYLE TARGET:
 - {style}
@@ -176,38 +141,35 @@ OUTPUT:
 - Ultra realistic
 - No illustration, no CGI, no 3D, no painting
 """
+    logging.info(f"[COMBINE-MOBILE] Prompt length: {len(prompt)}")
 
-    logging.info(f"[COMBINE] Prompt length: {len(prompt)}")
-
-    # -------------------------
-    # Llamada OpenAI (MULTI-IMAGE)
-    # -------------------------
     try:
-        response = client.images.edit(
-            model="gpt-image-1-mini",
-            image=[base_image, *clothes_images],
-            prompt=prompt,
-            n=1,
-            size="auto"
-        )
+        # Editar cada prenda encadenada
+        current_image = base_image
+        for img in clothes_images:
+            response = client.images.edit(
+                model="gpt-image-1-mini",
+                image=current_image,
+                mask=None,
+                prompt=prompt,
+                n=1,
+                size="1024x1024"
+            )
+            if not response.data or not response.data[0].b64_json:
+                raise Exception("Empty image response")
+            current_image = BytesIO(base64.b64decode(response.data[0].b64_json))
 
-        if not response.data or not response.data[0].b64_json:
-            raise Exception("Empty image response")
+        final_b64 = base64.b64encode(current_image.getvalue()).decode()
 
-        logging.info(f"[COMBINE] Request {request_id} SUCCESS")
-
+        logging.info(f"[COMBINE-MOBILE] Request {request_id} SUCCESS")
         return {
             "status": "ok",
             "request_id": request_id,
-            "image": response.data[0].b64_json,
+            "image": final_b64,
             "categories_used": categories,
-            "traits_used": traits
+            "traits_used": json.loads(body_traits)
         }
 
     except Exception as e:
-        logging.error(f"[COMBINE] Request {request_id} FAILED: {repr(e)}")
-        # No se descuentan créditos si falla
-        raise HTTPException(
-            status_code=500,
-            detail="Combine clothes generation failed"
-        )
+        logging.error(f"[COMBINE-MOBILE] Request {request_id} FAILED: {repr(e)}")
+        raise HTTPException(status_code=500, detail="Combine clothes generation failed")
