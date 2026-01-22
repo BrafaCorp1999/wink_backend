@@ -36,6 +36,7 @@ from routers.image_to_image import router as image_to_image_router
 from routers.combine_clothes import router as combine_clothes_router
 from routers.analyze_body_web import router as analyze_web_router
 from routers.generate_outfits_from_body_photo_web import router as body_photo_web_router
+from routers.combine_clothes_web import router as combine_clothes_web_router
 
 app.include_router(analyze_router, prefix="/api")
 app.include_router(body_photo_router, prefix="/api")
@@ -44,6 +45,7 @@ app.include_router(image_to_image_router, prefix="/api")
 app.include_router(combine_clothes_router, prefix="/api")
 app.include_router(analyze_web_router, prefix="/api")
 app.include_router(body_photo_web_router, prefix="/api")
+app.include_router(combine_clothes_web_router, prefix="/api")
 
 # =========================
 # Root / Health
