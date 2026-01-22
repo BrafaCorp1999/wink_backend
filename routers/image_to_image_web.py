@@ -11,17 +11,13 @@ import logging
 router = APIRouter()
 logging.basicConfig(level=logging.INFO)
 
-# -------------------------
-# OpenAI client
-# -------------------------
+# ------------------------- OpenAI client -------------------------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 if not client:
     raise RuntimeError("OPENAI_API_KEY not set")
 
-# =========================
-# Helper: decode base64
-# =========================
+# ========================= Helper: decode base64 =========================
 def decode_base64_image(b64_string: str) -> BytesIO:
     try:
         if b64_string.startswith("data:image"):
@@ -38,9 +34,7 @@ def decode_base64_image(b64_string: str) -> BytesIO:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid base64 image: {str(e)}")
 
-# =========================
-# PROMPT BASE (ENGLISH)
-# =========================
+# ========================= Prompts =========================
 IMAGE_TO_IMAGE_PROMPT = """
 Use the provided image as the SAME person reference.
 
@@ -64,19 +58,20 @@ RENDER RULES:
 """
 
 TEXT_PROMPT_TEMPLATE = """
-Generate a short outfit description using the following parameters:
+Describe the outfit in the following image (base64 format):
+{image_b64}
+
+Use the following parameters as guidance:
 - Style: {style}
 - Occasion: {occasion}
 - Climate: {climate}
 - Preferred colors: {colors}
 
-The description should be brief, coherent, and match the generated image, including main clothing category and colors. 
+The description should be short, coherent, and reflect exactly what is shown in the image, including main clothing category and colors.
 For example: 'Elegant red dress with black details, ideal for a party in cold weather.'
 """
 
-# =========================
-# ENDPOINT WEB
-# =========================
+# ========================= Endpoint Web =========================
 @router.post("/ai/generate-outfit-from-form-web")
 async def generate_outfit_from_form_web(
     gender: str = Form(...),
@@ -92,6 +87,7 @@ async def generate_outfit_from_form_web(
     request_id = str(uuid.uuid4())
     logging.info(f"[AI-FORM-WEB] Request {request_id} started")
 
+    # ------------------- Colors
     try:
         colors_list = json.loads(colors)
         colors_str = ", ".join(colors_list) if colors_list else "neutral tones"
@@ -101,44 +97,52 @@ async def generate_outfit_from_form_web(
     # ------------------- Base image
     base_image = decode_base64_image(base_image_b64)
 
-    # ------------------- Prompts
+    # ------------------- Prompt para generar imagen
     image_prompt = IMAGE_TO_IMAGE_PROMPT.format(
-        style=style, occasion=occasion, climate=climate, colors=colors_str
-    )
-    text_prompt = TEXT_PROMPT_TEMPLATE.format(
-        style=style, occasion=occasion, climate=climate, colors=colors_str
+        style=style,
+        occasion=occasion,
+        climate=climate,
+        colors=colors_str
     )
 
     try:
-        # ------------------- Generate image
-        image_response = client.images.edit(
+        # ------------------- Generar imagen
+        response = client.images.edit(
             model="gpt-image-1-mini",
             image=base_image,
             prompt=image_prompt,
             n=1,
             size="auto"
         )
-        if not image_response.data or not image_response.data[0].b64_json:
+
+        if not response.data or not response.data[0].b64_json:
             raise Exception("Empty image response")
 
-        # ------------------- Generate text
+        generated_b64 = response.data[0].b64_json
+
+        # ------------------- Generar descripción coherente con la imagen
+        text_prompt = TEXT_PROMPT_TEMPLATE.format(
+            image_b64=generated_b64,
+            style=style,
+            occasion=occasion,
+            climate=climate,
+            colors=colors_str
+        )
+
         text_response = client.chat.completions.create(
             model="gpt-4.1-mini",
-            messages=[
-                {"role": "system", "content": "You are a professional fashion assistant."},
-                {"role": "user", "content": text_prompt}
-            ],
-            temperature=0.7,
-            max_tokens=120
+            messages=[{"role": "user", "content": text_prompt}],
+            temperature=0.7
         )
-        recommendation = text_response.choices[0].message.content.strip() if text_response.choices else ""
+
+        recommendation = text_response.choices[0].message.content.strip()
 
         logging.info(f"[AI-FORM-WEB] Request {request_id} SUCCESS")
 
         return {
             "status": "ok",
             "request_id": request_id,
-            "image": image_response.data[0].b64_json,
+            "image": generated_b64,
             "recommendation": recommendation
         }
 
