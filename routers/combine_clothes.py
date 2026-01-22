@@ -61,7 +61,7 @@ def parse_traits(traits_json: str) -> dict:
         )
 
 # =========================
-# Helper: validar categorías
+# Helper: validar categorías y cantidad de prendas
 # =========================
 def parse_categories(
     categories_json: str,
@@ -76,6 +76,12 @@ def parse_categories(
             raise HTTPException(
                 status_code=400,
                 detail="Categories count must match clothes files"
+            )
+
+        if not (1 <= len(categories) <= 2):
+            raise HTTPException(
+                status_code=400,
+                detail="You can only replace 1 or 2 clothing items"
             )
 
         return categories
@@ -122,16 +128,12 @@ async def combine_clothes(
     # Preparar imágenes
     # -------------------------
     base_image = await ensure_png_upload(base_image_file)
-    clothes_images = [
-        await ensure_png_upload(f) for f in clothes_files
-    ]
+    clothes_images = [await ensure_png_upload(f) for f in clothes_files]
 
     # -------------------------
-    # Prompt (NO MODIFICADO)
+    # Prompt dinámico según prendas seleccionadas
     # -------------------------
-    items_text = "\n".join(
-        [f"- {cat} (use uploaded image exactly)" for cat in categories]
-    )
+    items_text = "\n".join([f"- {cat} (use uploaded image exactly)" for cat in categories])
 
     prompt = f"""
 Use the FIRST image as the SAME person reference.
@@ -143,7 +145,8 @@ IDENTITY & BODY LOCK (STRICT, NON-NEGOTIABLE):
 - The person must look exactly the same as the base image.
 
 CLOTHING REPLACEMENT ONLY:
-- ONLY change the clothes.
+- Replace ONLY the following clothing items:
+{items_text}
 - Fit the clothes naturally over the existing body.
 - Respect natural folds, gravity and fabric behavior.
 
@@ -174,6 +177,8 @@ OUTPUT:
 - No illustration, no CGI, no 3D, no painting
 """
 
+    logging.info(f"[COMBINE] Prompt length: {len(prompt)}")
+
     # -------------------------
     # Llamada OpenAI (MULTI-IMAGE)
     # -------------------------
@@ -200,7 +205,8 @@ OUTPUT:
         }
 
     except Exception as e:
-        logging.error(f"[COMBINE] Request {request_id} FAILED: {str(e)}")
+        logging.error(f"[COMBINE] Request {request_id} FAILED: {repr(e)}")
+        # No se descuentan créditos si falla
         raise HTTPException(
             status_code=500,
             detail="Combine clothes generation failed"
