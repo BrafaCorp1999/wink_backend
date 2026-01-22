@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Form
-from typing import List, Optional
+from typing import List
 from openai import OpenAI
 from io import BytesIO
 from PIL import Image
@@ -40,6 +40,23 @@ def decode_base64_image(b64_string: str) -> BytesIO:
         raise HTTPException(status_code=400, detail=f"Invalid base64 image: {str(e)}")
 
 # =========================
+# Helper: translate categories to English
+# =========================
+CATEGORY_MAP = {
+    "zapatos": "shoes",
+    "blusas": "blouse",
+    "chamarras": "jacket",
+    "vestidos": "dress",
+    "camisas": "shirt",
+    "pantalones": "pants",
+    "poleras": "t-shirt",
+    "accesorios": "accessories",
+}
+
+def translate_categories(categories: List[str]) -> List[str]:
+    return [CATEGORY_MAP.get(c.lower(), c.lower()) for c in categories]
+
+# =========================
 # Helper: parse categories
 # =========================
 def parse_categories(categories_json: str) -> List[str]:
@@ -47,10 +64,10 @@ def parse_categories(categories_json: str) -> List[str]:
         categories = json.loads(categories_json)
         if not isinstance(categories, list):
             raise Exception()
-        if not (1 <= len(categories) <= 3):
+        if len(categories) > 2:
             raise HTTPException(
                 status_code=400,
-                detail="You can only replace 1 to 3 clothing items"
+                detail="You can only replace up to 2 clothing items"
             )
         return categories
     except HTTPException:
@@ -81,6 +98,7 @@ async def combine_clothes_web(
         raise HTTPException(status_code=400, detail="Invalid clothes_images_b64 format")
 
     categories = parse_categories(clothes_categories)
+    categories_en = translate_categories(categories)
 
     if len(categories) != len(clothes_list):
         raise HTTPException(
@@ -92,8 +110,8 @@ async def combine_clothes_web(
     base_image = decode_base64_image(base_image_b64)
     clothes_images = [decode_base64_image(b64) for b64 in clothes_list]
 
-    # Prompt dinámico
-    items_text = "\n".join([f"- {cat} (use uploaded image exactly)" for cat in categories])
+    # Construir prompt
+    items_text = "\n".join([f"- {cat} (use uploaded image exactly)" for cat in categories_en])
     prompt = f"""
 Use the FIRST image as the SAME person reference.
 
@@ -113,7 +131,6 @@ CLOTHING RULES (STRICT):
 - Use ONLY the uploaded clothing images.
 - Do NOT invent clothes, colors or textures.
 - Do NOT add accessories.
-- Do NOT remove underwear visibility if originally hidden.
 
 STYLE TARGET:
 - {style}
@@ -138,22 +155,28 @@ OUTPUT:
     logging.info(f"[COMBINE-WEB] Prompt length: {len(prompt)}")
 
     try:
-        response = client.images.edit(
-            model="gpt-image-1-mini",
-            image=[base_image, *clothes_images],
-            prompt=prompt,
-            n=1,
-            size="auto"
-        )
+        # Solo enviamos 1 imagen base y 1 prenda a la vez
+        current_image = base_image
+        for img in clothes_images:
+            response = client.images.edit(
+                model="gpt-image-1-mini",
+                image=current_image,
+                mask=None,  # opcional: aquí se puede generar máscara por área si quieres más precisión
+                prompt=prompt,
+                n=1,
+                size="1024x1024"
+            )
+            if not response.data or not response.data[0].b64_json:
+                raise Exception("Empty image response")
+            current_image = BytesIO(base64.b64decode(response.data[0].b64_json))
 
-        if not response.data or not response.data[0].b64_json:
-            raise Exception("Empty image response")
+        final_b64 = base64.b64encode(current_image.getvalue()).decode()
 
         logging.info(f"[COMBINE-WEB] Request {request_id} SUCCESS")
         return {
             "status": "ok",
             "request_id": request_id,
-            "image": response.data[0].b64_json,
+            "image": final_b64,
             "categories_used": categories,
             "traits_used": json.loads(body_traits)
         }
