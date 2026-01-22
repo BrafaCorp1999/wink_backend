@@ -13,10 +13,15 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost",                  # permite cualquier puerto en localhost
-        "https://wink-e51d9.web.app",        # Firebase Hosting actual
+        "http://localhost",
+        "http://localhost:3000",
+        "http://localhost:5000",
+        "http://localhost:8000",
+        "http://127.0.0.1",
+        "https://wink-e51d9.web.app",
     ],
-    allow_credentials=True,                 # 🔹 necesario para Firebase Auth
+    allow_origin_regex=r"http://localhost:\d+",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
