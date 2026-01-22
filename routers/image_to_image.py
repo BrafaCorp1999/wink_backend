@@ -37,7 +37,7 @@ async def ensure_png_upload(upload: UploadFile) -> BytesIO:
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
 # =========================
-# PROMPT BASE
+# PROMPT BASE (ENGLISH)
 # =========================
 IMAGE_TO_IMAGE_PROMPT = """
 Use the provided image as the SAME person reference.
@@ -59,6 +59,17 @@ RENDER RULES:
 - Neutral standing pose
 - Photorealistic
 - Clean fashion photo, no illustration or CGI
+"""
+
+TEXT_PROMPT_TEMPLATE = """
+Generate a short outfit description using the following parameters:
+- Style: {style}
+- Occasion: {occasion}
+- Climate: {climate}
+- Preferred colors: {colors}
+
+The description should be brief, coherent, and match the generated image, including main clothing category and colors. 
+For example: 'Elegant red dress with black details, ideal for a party in cold weather.'
 """
 
 # =========================
@@ -89,32 +100,46 @@ async def generate_outfit_from_form(
     # ------------------- Base image
     base_image = await ensure_png_upload(base_image_file)
 
-    # ------------------- Prompt
-    prompt = IMAGE_TO_IMAGE_PROMPT.format(
-        style=style,
-        occasion=occasion,
-        climate=climate,
-        colors=colors_str
+    # ------------------- Prompts
+    image_prompt = IMAGE_TO_IMAGE_PROMPT.format(
+        style=style, occasion=occasion, climate=climate, colors=colors_str
+    )
+    text_prompt = TEXT_PROMPT_TEMPLATE.format(
+        style=style, occasion=occasion, climate=climate, colors=colors_str
     )
 
     try:
-        response = client.images.edit(
+        # ------------------- Generate image
+        image_response = client.images.edit(
             model="gpt-image-1-mini",
             image=base_image,
-            prompt=prompt,
+            prompt=image_prompt,
             n=1,
             size="auto"
         )
-
-        if not response.data or not response.data[0].b64_json:
+        if not image_response.data or not image_response.data[0].b64_json:
             raise Exception("Empty image response")
+
+        # ------------------- Generate text
+        text_response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": "You are a professional fashion assistant."},
+                {"role": "user", "content": text_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=120
+        )
+
+        recommendation = text_response.choices[0].message.content.strip() if text_response.choices else ""
 
         logging.info(f"[AI-FORM-MOBILE] Request {request_id} SUCCESS")
 
         return {
             "status": "ok",
             "request_id": request_id,
-            "image": response.data[0].b64_json
+            "image": image_response.data[0].b64_json,
+            "recommendation": recommendation
         }
 
     except Exception as e:
