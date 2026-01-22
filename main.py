@@ -7,18 +7,23 @@ app = FastAPI(
     description="Body analysis + AI outfit generation"
 )
 
+# =========================
+# CORS
+# =========================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:56304",      # localhost pruebas
-        "https://tu-demo.web.app",    # Firebase Hosting
+        "http://localhost",                  # permite cualquier puerto en localhost
+        "https://wink-e51d9.web.app",        # Firebase Hosting actual
     ],
-    allow_credentials=True,  # 🔹 necesario para Firebase Auth
+    allow_credentials=True,                 # 🔹 necesario para Firebase Auth
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
+# =========================
+# Routers / Endpoints
+# =========================
 from routers.analyze_body_with_face import router as analyze_router
 from routers.generate_outfits_from_body_photo import router as body_photo_router
 from routers.generate_outfits_from_selfie import router as selfie_router
@@ -31,6 +36,9 @@ app.include_router(selfie_router, prefix="/api")
 app.include_router(image_to_image_router, prefix="/api")
 app.include_router(combine_clothes_router, prefix="/api")
 
+# =========================
+# Root / Health
+# =========================
 @app.get("/")
 def root():
     return {"status": "ok", "message": "Backend running"}
