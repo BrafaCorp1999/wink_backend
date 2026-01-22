@@ -78,10 +78,10 @@ def parse_categories(
                 detail="Categories count must match clothes files"
             )
 
-        if not (1 <= len(categories) <= 2):
+        if not (1 <= len(categories) <= 3):
             raise HTTPException(
                 status_code=400,
-                detail="You can only replace 1 or 2 clothing items"
+                detail="You can only replace 1 or 3 clothing items"
             )
 
         return categories
