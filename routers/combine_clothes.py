@@ -67,7 +67,7 @@ Use the first image as the exact same person reference.
 
 IDENTITY & BODY LOCK:
 - Preserve face, hairstyle, skin tone, natural marks, and proportions.
-- Do not smooth, whiten, or stylize skin or facial features.
+- Do not smooth, whiten, or stylize skin or facial features, preserve body traits.
 
 CLOTHING REPLACEMENT:
 - Replace ONLY the {cat} using the uploaded image exactly (image {idx+1}).
