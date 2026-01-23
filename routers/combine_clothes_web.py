@@ -10,47 +10,9 @@ import uuid
 import logging
 
 router = APIRouter()
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY is not set")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 logging.basicConfig(level=logging.INFO)
 
-# =========================
-# Helper: decode base64 to PNG
-# =========================
-def decode_base64_image(b64_string: str) -> BytesIO:
-    try:
-        if b64_string.startswith("data:image"):
-            b64_string = b64_string.split(",")[-1]
-
-        image_bytes = base64.b64decode(b64_string)
-        image = Image.open(BytesIO(image_bytes)).convert("RGB")
-
-        MAX_SIZE = 1024
-        if max(image.size) > MAX_SIZE:
-            image.thumbnail((MAX_SIZE, MAX_SIZE))
-
-        buffer = BytesIO()
-        image.save(buffer, format="PNG")
-        buffer.seek(0)
-        return buffer
-
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid base64 image: {str(e)}")
-
-# =========================
-# Helper: BytesIO → OpenAI file
-# =========================
-def bytesio_to_file(image: BytesIO, filename: str):
-    image.seek(0)
-    return (filename, image.read(), "image/png")
-
-# =========================
-# Category helpers
-# =========================
 CATEGORY_MAP = {
     "zapatos": "shoes",
     "blusas": "blouse",
@@ -65,25 +27,22 @@ CATEGORY_MAP = {
 def translate_categories(categories: List[str]) -> List[str]:
     return [CATEGORY_MAP.get(c.lower(), c.lower()) for c in categories]
 
-def parse_categories(categories_json: str) -> List[str]:
-    try:
-        categories = json.loads(categories_json)
-        if not isinstance(categories, list):
-            raise Exception()
-        if len(categories) > 2:
-            raise HTTPException(
-                status_code=400,
-                detail="You can only replace up to 2 clothing items"
-            )
-        return categories
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid clothes_categories JSON")
+def decode_base64_image(b64_string: str) -> BytesIO:
+    if b64_string.startswith("data:image"):
+        b64_string = b64_string.split(",")[-1]
+    image_bytes = base64.b64decode(b64_string)
+    image = Image.open(BytesIO(image_bytes)).convert("RGB")
+    if max(image.size) > 1024:
+        image.thumbnail((1024, 1024))
+    buf = BytesIO()
+    image.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
 
-# =========================
-# ENDPOINT WEB
-# =========================
+def bytesio_to_file(image: BytesIO, filename: str):
+    image.seek(0)
+    return (filename, image.read(), "image/png")
+
 @router.post("/ai/combine-clothes-web")
 async def combine_clothes_web(
     gender: str = Form(...),
@@ -97,67 +56,45 @@ async def combine_clothes_web(
 
     try:
         clothes_list = json.loads(clothes_images_b64)
-        if not isinstance(clothes_list, list) or not clothes_list:
-            raise Exception()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid clothes_images_b64")
+        categories = json.loads(clothes_categories)
+        categories_en = translate_categories(categories)
 
-    categories = parse_categories(clothes_categories)
-    categories_en = translate_categories(categories)
+        if len(clothes_list) != len(categories):
+            raise HTTPException(status_code=400, detail="Categories count mismatch")
 
-    if len(categories) != len(clothes_list):
-        raise HTTPException(status_code=400, detail="Categories count mismatch")
+        base_image = decode_base64_image(base_image_b64)
+        clothes_images = [decode_base64_image(b64) for b64 in clothes_list]
 
-    # Decodificar imágenes
-    base_image = decode_base64_image(base_image_b64)
-    clothes_images = [decode_base64_image(b64) for b64 in clothes_list]
+        # Construir prompt para cada prenda
+        for idx, cat in enumerate(categories_en):
+            prompt = f"""
+Use the first image as the exact same person reference.
 
-    # Construir texto de prendas
-    items_text = "\n".join([f"- {cat} (use uploaded image exactly)" for cat in categories_en])
+IDENTITY & BODY LOCK:
+- Preserve face, hairstyle, skin tone, natural marks, and proportions.
+- Do not smooth, whiten, or stylize skin or facial features, preserve body traits.
 
-    # Prompt actualizado para preservar rostro, piel, y prendas no seleccionadas
-    prompt = f"""
-Use the FIRST image as the SAME person reference.
+CLOTHING REPLACEMENT:
+- Replace ONLY the {cat} using the uploaded image exactly (image {idx+1}).
+- Do NOT alter any other clothing.
+- Fit naturally over the body respecting folds and gravity.
 
-IDENTITY & BODY LOCK (STRICT):
-- Preserve face, hairstyle, skin tone, natural imperfections, freckles, and any unique marks.
-- Do NOT change body size, posture, or volume.
-- Do NOT smooth, whiten, or alter facial or skin features.
-- Keep all proportions exactly as in the original image.
-
-CLOTHING REPLACEMENT ONLY:
-- Replace ONLY the following clothing items:
-{items_text}
-- Use the uploaded image exactly as provided for each clothing item.
-- Do NOT alter any other clothing not listed above.
-- Fit clothes naturally over the existing body.
-- Respect natural folds, gravity, and fabric behavior.
-
-STYLE TARGET:
-- {style}
-- Clean, realistic fashion photography.
-
-SCENE & LIGHTING:
-- Preserve original background and environment (garden, park, plaza, etc.)
-- Soft natural lighting, no strong shadows
+STYLE & SCENE:
+- {style}, clean, realistic fashion photography.
+- Preserve original background (garden, plaza, etc.)
+- Soft natural lighting, no shadows, no CGI.
 
 POSE & FRAMING:
-- Full body (head to feet) fully visible
-- Hair, hands, and feet visible
-- Camera at human eye level
+- Full body, head to feet visible.
+- Hair, hands, and feet fully visible.
+- Camera at eye level.
 
 OUTPUT:
-- One ultra-realistic final image
-- No illustration, no CGI, no 3D, no painting
+- One ultra-realistic image, no illustration, no painting, no 3D.
 """
-
-    try:
-        current_image = base_image
-
-        for idx, _ in enumerate(clothes_images):
             response = client.images.edit(
                 model="gpt-image-1-mini",
-                image=bytesio_to_file(current_image, f"base_{idx}.png"),
+                image=bytesio_to_file(base_image, f"base_{idx}.png"),
                 prompt=prompt,
                 n=1,
                 size="1024x1024"
@@ -165,20 +102,10 @@ OUTPUT:
 
             if not response.data or not response.data[0].b64_json:
                 raise Exception("Empty image response")
+            base_image = BytesIO(base64.b64decode(response.data[0].b64_json))
 
-            current_image = BytesIO(
-                base64.b64decode(response.data[0].b64_json)
-            )
-
-        final_b64 = base64.b64encode(current_image.getvalue()).decode()
-
-        logging.info(f"[COMBINE-WEB] Request {request_id} SUCCESS")
-        return {
-            "status": "ok",
-            "request_id": request_id,
-            "image": final_b64,
-            "categories_used": categories
-        }
+        final_b64 = base64.b64encode(base_image.getvalue()).decode()
+        return {"status": "ok", "request_id": request_id, "image": final_b64, "categories_used": categories}
 
     except Exception as e:
         logging.error(f"[COMBINE-WEB] FAILED: {repr(e)}")
