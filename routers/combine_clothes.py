@@ -91,25 +91,50 @@ async def combine_clothes_mobile(
     if len(categories) != len(clothes_files):
         raise HTTPException(status_code=400, detail="Categories count mismatch")
 
+    # Decodificar imágenes
     base_image = decode_file(base_image_file)
     clothes_images = [decode_file(f) for f in clothes_files]
 
+    # Construir texto de prendas
     items_text = "\n".join([f"- {cat} (use uploaded image exactly)" for cat in categories_en])
 
+    # Prompt actualizado para mobile
     prompt = f"""
 Use the FIRST image as the SAME person reference.
 
-IDENTITY & BODY LOCK:
-- Preserve face and body exactly
+IDENTITY & BODY LOCK (STRICT):
+- Preserve face, hairstyle, skin tone, natural imperfections, freckles, and any unique marks.
+- Do NOT change body size, posture, or volume.
+- Keep all proportions exactly as in the original image.
+- Do NOT smooth, whiten, or alter facial or skin features.
 
-CLOTHING REPLACEMENT:
+CLOTHING REPLACEMENT ONLY:
+- Replace ONLY the following clothing items:
 {items_text}
+- DO NOT alter any other clothing not listed above.
+- Fit clothes naturally over the existing body.
+- Respect natural folds, gravity, and fabric behavior.
+- Use ONLY the uploaded clothing images exactly as provided.
+- Do NOT invent colors, textures, or accessories for other clothing.
 
-STYLE:
+STYLE TARGET:
 - {style}
+- Clean, realistic fashion photography.
+
+SCENE & LIGHTING:
+- Neutral background
+- Soft natural lighting
+- No strong shadows
+- No transparent or fantasy environments
+
+POSE & FRAMING:
+- Full body (head to feet) fully visible
+- Neutral standing pose
+- Camera at human eye level
 
 OUTPUT:
-- One realistic full-body photo
+- One ultra realistic final image
+- No illustration, no CGI, no 3D, no painting
 """
 
     try:
