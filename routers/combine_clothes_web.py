@@ -81,7 +81,6 @@ def parse_categories(categories_json: str) -> List[str]:
 @router.post("/ai/combine-clothes-web")
 async def combine_clothes_web(
     gender: str = Form(...),
-    body_traits: str = Form(...),
     style: str = Form("casual"),
     base_image_b64: str = Form(...),
     clothes_images_b64: str = Form(...),  # JSON array de strings base64
@@ -177,8 +176,7 @@ OUTPUT:
             "status": "ok",
             "request_id": request_id,
             "image": final_b64,
-            "categories_used": categories,
-            "traits_used": json.loads(body_traits)
+            "categories_used": categories
         }
 
     except Exception as e:
