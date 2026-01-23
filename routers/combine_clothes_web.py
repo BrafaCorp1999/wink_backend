@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException, Form
-from typing import List
 from openai import OpenAI
 from io import BytesIO
 from PIL import Image
@@ -10,8 +9,36 @@ import uuid
 import logging
 
 router = APIRouter()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 logging.basicConfig(level=logging.INFO)
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise RuntimeError("OPENAI_API_KEY is not set")
+
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# =========================
+# Helpers
+# =========================
+def decode_base64_image(b64: str) -> BytesIO:
+    try:
+        image_bytes = base64.b64decode(b64)
+        image = Image.open(BytesIO(image_bytes)).convert("RGB")
+
+        MAX_SIZE = 1024
+        if max(image.size) > MAX_SIZE:
+            image.thumbnail((MAX_SIZE, MAX_SIZE))
+
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        buffer.seek(0)
+        return buffer
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 image: {str(e)}")
+
+def bytesio_to_file(image: BytesIO, filename: str):
+    image.seek(0)
+    return (filename, image.read(), "image/png")
 
 CATEGORY_MAP = {
     "zapatos": "shoes",
@@ -24,25 +51,12 @@ CATEGORY_MAP = {
     "accesorios": "accessories",
 }
 
-def translate_categories(categories: List[str]) -> List[str]:
-    return [CATEGORY_MAP.get(c.lower(), c.lower()) for c in categories]
+def translate_category(cat: str) -> str:
+    return CATEGORY_MAP.get(cat.lower(), cat.lower())
 
-def decode_base64_image(b64_string: str) -> BytesIO:
-    if b64_string.startswith("data:image"):
-        b64_string = b64_string.split(",")[-1]
-    image_bytes = base64.b64decode(b64_string)
-    image = Image.open(BytesIO(image_bytes)).convert("RGB")
-    if max(image.size) > 1024:
-        image.thumbnail((1024, 1024))
-    buf = BytesIO()
-    image.save(buf, format="PNG")
-    buf.seek(0)
-    return buf
-
-def bytesio_to_file(image: BytesIO, filename: str):
-    image.seek(0)
-    return (filename, image.read(), "image/png")
-
+# =========================
+# ENDPOINT WEB – 1 PRENDA
+# =========================
 @router.post("/ai/combine-clothes-web")
 async def combine_clothes_web(
     gender: str = Form(...),
@@ -52,21 +66,39 @@ async def combine_clothes_web(
     clothes_categories: str = Form(...)
 ):
     request_id = str(uuid.uuid4())
-    logging.info(f"[COMBINE-WEB] Request {request_id} started")
+    logging.info(f"[COMBINE-WEB-1ITEM] Request {request_id} started")
 
     try:
+        # =========================
+        # Parse inputs
+        # =========================
         clothes_list = json.loads(clothes_images_b64)
         categories = json.loads(clothes_categories)
-        categories_en = translate_categories(categories)
 
-        if len(clothes_list) != len(categories):
-            raise HTTPException(status_code=400, detail="Categories count mismatch")
+        if not isinstance(clothes_list, list) or not isinstance(categories, list):
+            raise HTTPException(status_code=400, detail="Invalid clothes data")
 
+        if len(clothes_list) != 1 or len(categories) != 1:
+            raise HTTPException(
+                status_code=400,
+                detail="This endpoint supports EXACTLY 1 clothing item"
+            )
+
+        category_en = translate_category(categories[0])
+
+        # =========================
+        # Decode images
+        # =========================
         base_image = decode_base64_image(base_image_b64)
-        clothes_images = [decode_base64_image(b64) for b64 in clothes_list]
 
-        # Construir prompt para cada prenda
-        # for idx, cat in enumerate(categories_en):
+        # NOTA:
+        # La prenda NO se pasa aún como imagen de referencia.
+        # Primero validamos comportamiento del prompt.
+        _ = decode_base64_image(clothes_list[0])
+
+        # =========================
+        # PROMPT SIMPLE Y DIRECTO
+        # =========================
         prompt = f"""
 TASK:
 Replace ONE clothing item on the person using the uploaded clothing image.
@@ -79,11 +111,11 @@ REFERENCE PERSON (IMAGE 1):
 - Keep body shape, height, proportions, torso, legs, and posture unchanged.
 
 CLOTHING REPLACEMENT:
-- Replace ONLY the selected {CATEGORY} using the uploaded clothing image.
-- Use the clothing image EXACTLY as provided.
+- Replace ONLY the {category_en}.
+- Use the uploaded clothing image EXACTLY as provided.
 - Do NOT invent, redesign, or approximate the clothing.
 - Do NOT change or remove any other clothing items.
-- Fit the clothing naturally to the body (realistic folds, gravity, and size).
+- Fit the clothing naturally to the body.
 
 DO NOT:
 - Do NOT crop the image.
@@ -100,24 +132,36 @@ FRAMING:
 
 OUTPUT:
 - One realistic photo.
-- Natural photo realism.
 - No illustration, no CGI, no 3D, no painting.
 """
-            response = client.images.edit(
-                model="gpt-image-1-mini",
-                image=bytesio_to_file(base_image, f"base_{idx}.png"),
-                prompt=prompt,
-                n=1,
-                size="1024x1024"
-            )
 
-            if not response.data or not response.data[0].b64_json:
-                raise Exception("Empty image response")
-            base_image = BytesIO(base64.b64decode(response.data[0].b64_json))
+        # =========================
+        # Image generation
+        # =========================
+        response = client.images.edit(
+            model="gpt-image-1-mini",
+            image=bytesio_to_file(base_image, "base.png"),
+            prompt=prompt,
+            n=1,
+            size="1024x1024"
+        )
 
-        final_b64 = base64.b64encode(base_image.getvalue()).decode()
-        return {"status": "ok", "request_id": request_id, "image": final_b64, "categories_used": categories}
+        if not response.data or not response.data[0].b64_json:
+            raise Exception("Empty image response")
 
+        final_b64 = response.data[0].b64_json
+
+        logging.info(f"[COMBINE-WEB-1ITEM] Request {request_id} SUCCESS")
+
+        return {
+            "status": "ok",
+            "request_id": request_id,
+            "image": final_b64,
+            "category_used": categories[0]
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"[COMBINE-WEB] FAILED: {repr(e)}")
+        logging.error(f"[COMBINE-WEB-1ITEM] FAILED: {repr(e)}")
         raise HTTPException(status_code=500, detail="Combine clothes generation failed")
