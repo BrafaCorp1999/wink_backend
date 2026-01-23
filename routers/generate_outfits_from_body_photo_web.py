@@ -89,7 +89,7 @@ Additional context:
 
     try:
         response = client.images.edit(
-            model="gpt-image-1",
+            model="gpt-image-1-mini",
             image=buffer,
             prompt=final_prompt,
             size="auto"
