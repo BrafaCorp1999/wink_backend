@@ -19,15 +19,17 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 logging.basicConfig(level=logging.INFO)
 
 # =========================
-# Helper: decode uploaded file
+# Helpers
 # =========================
 def decode_file(file: UploadFile) -> BytesIO:
     try:
         content = file.file.read()
         image = Image.open(BytesIO(content)).convert("RGB")
+
         MAX_SIZE = 1024
         if max(image.size) > MAX_SIZE:
             image.thumbnail((MAX_SIZE, MAX_SIZE))
+
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         buffer.seek(0)
@@ -35,9 +37,10 @@ def decode_file(file: UploadFile) -> BytesIO:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
 
-# =========================
-# Helper: translate categories
-# =========================
+def bytesio_to_file(image: BytesIO, filename: str):
+    image.seek(0)
+    return (filename, image.read(), "image/png")
+
 CATEGORY_MAP = {
     "zapatos": "shoes",
     "blusas": "blouse",
@@ -52,9 +55,6 @@ CATEGORY_MAP = {
 def translate_categories(categories: List[str]) -> List[str]:
     return [CATEGORY_MAP.get(c.lower(), c.lower()) for c in categories]
 
-# =========================
-# Helper: parse categories
-# =========================
 def parse_categories(categories_json: str) -> List[str]:
     try:
         categories = json.loads(categories_json)
@@ -72,7 +72,7 @@ def parse_categories(categories_json: str) -> List[str]:
         raise HTTPException(status_code=400, detail="Invalid clothes_categories JSON")
 
 # =========================
-# ENDPOINT MOBILE: COMBINAR PRENDAS
+# ENDPOINT MOBILE
 # =========================
 @router.post("/ai/combine-clothes")
 async def combine_clothes_mobile(
@@ -89,73 +89,47 @@ async def combine_clothes_mobile(
     categories_en = translate_categories(categories)
 
     if len(categories) != len(clothes_files):
-        raise HTTPException(
-            status_code=400,
-            detail="Number of categories must match number of clothing images"
-        )
+        raise HTTPException(status_code=400, detail="Categories count mismatch")
 
-    # Decodificar imágenes
     base_image = decode_file(base_image_file)
     clothes_images = [decode_file(f) for f in clothes_files]
 
-    # Construir prompt
     items_text = "\n".join([f"- {cat} (use uploaded image exactly)" for cat in categories_en])
+
     prompt = f"""
 Use the FIRST image as the SAME person reference.
 
-IDENTITY & BODY LOCK (STRICT, NON-NEGOTIABLE):
-- Preserve the exact face, hairstyle, skin tone, body shape, body size and proportions.
-- Do NOT change body volume, curves, height, weight, muscles or posture.
-- Do NOT slim, enlarge or stylize the body.
-- The person must look exactly the same as the base image.
+IDENTITY & BODY LOCK:
+- Preserve face and body exactly
 
-CLOTHING REPLACEMENT ONLY:
-- Replace ONLY the following clothing items:
+CLOTHING REPLACEMENT:
 {items_text}
-- Fit the clothes naturally over the existing body.
-- Respect natural folds, gravity and fabric behavior.
 
-CLOTHING RULES (STRICT):
-- Use ONLY the uploaded clothing images.
-- Do NOT invent clothes, colors or textures.
-- Do NOT add accessories.
-
-STYLE TARGET:
+STYLE:
 - {style}
-- Clean, realistic fashion photography.
-
-SCENE & LIGHTING:
-- Neutral background
-- Soft natural lighting
-- No strong shadows
-- No transparent or fantasy environments
-
-POSE & FRAMING:
-- Full body (head to feet)
-- Neutral standing pose
-- Camera at human eye level
 
 OUTPUT:
-- One single final image
-- Ultra realistic
-- No illustration, no CGI, no 3D, no painting
+- One realistic full-body photo
 """
-    logging.info(f"[COMBINE-MOBILE] Prompt length: {len(prompt)}")
 
     try:
-        # Editar cada prenda encadenada
         current_image = base_image
-        for img in clothes_images:
+
+        for idx, _ in enumerate(clothes_images):
             response = client.images.edit(
                 model="gpt-image-1-mini",
-                image=current_image,
+                image=bytesio_to_file(current_image, f"base_{idx}.png"),
                 prompt=prompt,
                 n=1,
                 size="1024x1024"
             )
+
             if not response.data or not response.data[0].b64_json:
                 raise Exception("Empty image response")
-            current_image = BytesIO(base64.b64decode(response.data[0].b64_json))
+
+            current_image = BytesIO(
+                base64.b64decode(response.data[0].b64_json)
+            )
 
         final_b64 = base64.b64encode(current_image.getvalue()).decode()
 
@@ -168,5 +142,5 @@ OUTPUT:
         }
 
     except Exception as e:
-        logging.error(f"[COMBINE-MOBILE] Request {request_id} FAILED: {repr(e)}")
+        logging.error(f"[COMBINE-MOBILE] FAILED: {repr(e)}")
         raise HTTPException(status_code=500, detail="Combine clothes generation failed")
