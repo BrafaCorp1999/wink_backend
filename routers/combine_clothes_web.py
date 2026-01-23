@@ -66,31 +66,42 @@ async def combine_clothes_web(
         clothes_images = [decode_base64_image(b64) for b64 in clothes_list]
 
         # Construir prompt para cada prenda
-        for idx, cat in enumerate(categories_en):
-            prompt = f"""
-Use the first image as the exact same person reference.
+        # for idx, cat in enumerate(categories_en):
+        prompt = f"""
+TASK:
+Replace ONE clothing item on the person using the uploaded clothing image.
 
-IDENTITY & BODY LOCK:
-- Preserve face, hairstyle, skin tone, natural marks, and proportions.
-- Do not smooth, whiten, or stylize skin or facial features, preserve body traits.
+REFERENCE PERSON (IMAGE 1):
+- This is the SAME person.
+- Keep the face EXACTLY the same.
+- Do NOT change facial features, skin tone, lighting, or expression.
+- Do NOT beautify, smooth, whiten, or stylize the face.
+- Keep body shape, height, proportions, torso, legs, and posture unchanged.
 
 CLOTHING REPLACEMENT:
-- Replace ONLY the {cat} using the uploaded image exactly (image {idx+1}).
-- Do NOT alter any other clothing.
-- Fit naturally over the body respecting folds and gravity.
+- Replace ONLY the selected {CATEGORY} using the uploaded clothing image.
+- Use the clothing image EXACTLY as provided.
+- Do NOT invent, redesign, or approximate the clothing.
+- Do NOT change or remove any other clothing items.
+- Fit the clothing naturally to the body (realistic folds, gravity, and size).
 
-STYLE & SCENE:
-- {style}, clean, realistic fashion photography.
-- Preserve original background (garden, plaza, etc.)
-- Soft natural lighting, no shadows, no CGI.
+DO NOT:
+- Do NOT crop the image.
+- Do NOT zoom in.
+- Do NOT cut hair, head, hands, or feet.
+- Do NOT add new clothes or accessories.
 
-POSE & FRAMING:
-- Full body, head to feet visible.
-- Hair, hands, and feet fully visible.
-- Camera at eye level.
+SCENE:
+- Keep the original background exactly the same.
+- Keep original lighting and environment.
+
+FRAMING:
+- Full body visible from head to feet.
 
 OUTPUT:
-- One ultra-realistic image, no illustration, no painting, no 3D.
+- One realistic photo.
+- Natural photo realism.
+- No illustration, no CGI, no 3D, no painting.
 """
             response = client.images.edit(
                 model="gpt-image-1-mini",
