@@ -160,7 +160,6 @@ OUTPUT:
             response = client.images.edit(
                 model="gpt-image-1-mini",
                 image=current_image,
-                mask=None,  # opcional: aquí se puede generar máscara por área si quieres más precisión
                 prompt=prompt,
                 n=1,
                 size="1024x1024"
