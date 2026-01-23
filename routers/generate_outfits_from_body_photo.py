@@ -81,7 +81,7 @@ async def generate_outfits_from_body_photo(
     request_id = str(uuid.uuid4())
     print(f"[IMAGE_GEN_START][BODY] {request_id}")
 
-    # Parse body traits (si lo usas después para registro o logs)
+    # Parse body traits (para registro/log)
     try:
         traits = json.loads(body_traits)
     except Exception:
@@ -92,6 +92,7 @@ async def generate_outfits_from_body_photo(
 
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+    # Combinar prompt base con contexto
     final_prompt = BODY_PHOTO_PROMPT_MOBILE + f"""
 Additional context:
 - Gender: {gender}
