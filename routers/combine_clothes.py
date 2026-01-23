@@ -166,8 +166,7 @@ OUTPUT:
             "status": "ok",
             "request_id": request_id,
             "image": final_b64,
-            "categories_used": categories,
-            "traits_used": json.loads(body_traits)
+            "categories_used": categories
         }
 
     except Exception as e:
