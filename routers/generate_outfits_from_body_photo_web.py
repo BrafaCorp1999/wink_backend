@@ -13,35 +13,29 @@ router = APIRouter()
 # PROMPT – BODY PHOTO (WEB)
 # MISMO CONCEPTO QUE MÓVIL
 # =========================
+# =========================
+# PROMPT – BODY PHOTO (WEB) – ACTUALIZADO
+# =========================
 BODY_PHOTO_PROMPT_WEB = """
 You are editing a fashion reference photo.
 
-Preserve the person’s overall body shape, proportions, and facial structure.
-Do not exaggerate or stylize the face or body.
+IDENTITY & BODY LOCK (STRICT):
+- Preserve face, hairstyle, skin tone, natural imperfections, freckles, and any unique marks.
+- Do NOT change body size, posture, or volume.
+- Keep all proportions exactly as in the original image.
+- Do NOT smooth, whiten, or alter facial or skin features.
 
-Replace the outfit with a similar clothing category.
-Ensure realistic fit and natural appearance.
+CLOTHING REPLACEMENT:
+- Replace the outfit with a similar clothing category if needed.
+- Ensure realistic fit and natural appearance.
+- Do NOT alter any other clothing, skin, or body parts not specified.
 
-Maintain a neutral, realistic photographic style.
+STYLE & OUTPUT:
+- Maintain a neutral, realistic photographic style.
+- Full-body photo (head to feet visible)
+- Soft natural lighting, no strong shadows
+- Neutral background, no fantasy or CGI effects
 """
-
-# =========================
-# NORMALIZAR GENDER
-# =========================
-def normalize_gender(value: str) -> str:
-    value = value.lower().strip()
-    if value in ("male", "man", "hombre"):
-        return "male"
-    if value in ("female", "woman", "mujer"):
-        return "female"
-    return "female"
-
-# =========================
-# REQUEST MODEL (WEB)
-# =========================
-class BodyPhotoWebRequest(BaseModel):
-    gender: str
-    image_base64: str
 
 # =========================
 # ENDPOINT – BODY PHOTO (WEB)
@@ -89,7 +83,7 @@ Additional context:
             model="gpt-image-1",
             image=buffer,
             prompt=final_prompt,
-            size="auto"
+            size="1024x0124"
         )
 
         if not response.data or not response.data[0].b64_json:
