@@ -77,7 +77,6 @@ def parse_categories(categories_json: str) -> List[str]:
 @router.post("/ai/combine-clothes")
 async def combine_clothes_mobile(
     gender: str = Form(...),
-    body_traits: str = Form(...),
     style: str = Form("casual"),
     base_image_file: UploadFile = File(...),
     clothes_files: List[UploadFile] = File(...),
