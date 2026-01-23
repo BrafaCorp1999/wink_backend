@@ -149,7 +149,6 @@ OUTPUT:
             response = client.images.edit(
                 model="gpt-image-1-mini",
                 image=current_image,
-                mask=None,
                 prompt=prompt,
                 n=1,
                 size="1024x1024"
