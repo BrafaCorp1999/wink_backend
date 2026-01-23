@@ -102,7 +102,7 @@ Additional context:
 
     try:
         response = client.images.edit(
-            model="gpt-image-1",
+            model="gpt-image-1-mini",
             image=base_image,
             prompt=final_prompt,
             size="1024x1024"
