@@ -9,18 +9,27 @@ import uuid
 router = APIRouter()
 
 # =========================
-# PROMPT – BODY PHOTO (CLONADO CORPORAL)
+# PROMPT – BODY PHOTO (MOBILE, ACTUALIZADO)
 # =========================
-BODY_PHOTO_PROMPT_MODERADO = """
+BODY_PHOTO_PROMPT_MOBILE = """
 You are editing a fashion reference photo.
 
-Preserve the person’s overall body shape, proportions, and facial structure.
-Do not exaggerate or stylize the face or body.
+IDENTITY & BODY LOCK (STRICT):
+- Preserve face, hairstyle, skin tone, natural imperfections, freckles, and any unique marks.
+- Do NOT change body size, posture, or volume.
+- Keep all proportions exactly as in the original image.
+- Do NOT smooth, whiten, or alter facial or skin features.
 
-Replace the outfit with a similar clothing category.
-Ensure realistic fit and natural appearance.
+CLOTHING REPLACEMENT:
+- Replace the outfit with a similar clothing category if needed.
+- Ensure realistic fit and natural appearance.
+- Do NOT alter any other clothing, skin, or body parts not specified.
 
-Maintain a neutral, realistic photographic style.
+STYLE & OUTPUT:
+- Maintain a neutral, realistic photographic style.
+- Full-body photo (head to feet visible)
+- Soft natural lighting, no strong shadows
+- Neutral background, no fantasy or CGI effects
 """
 
 # =========================
@@ -59,7 +68,7 @@ async def ensure_png_upload(upload: UploadFile) -> BytesIO:
         )
 
 # =========================
-# ENDPOINT – BODY PHOTO REGISTRATION
+# ENDPOINT – BODY PHOTO REGISTRATION (MOBILE)
 # =========================
 @router.post("/generate-outfits/body-photo")
 async def generate_outfits_from_body_photo(
@@ -72,6 +81,7 @@ async def generate_outfits_from_body_photo(
     request_id = str(uuid.uuid4())
     print(f"[IMAGE_GEN_START][BODY] {request_id}")
 
+    # Parse body traits (si lo usas después para registro o logs)
     try:
         traits = json.loads(body_traits)
     except Exception:
@@ -82,9 +92,12 @@ async def generate_outfits_from_body_photo(
 
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    final_prompt = BODY_PHOTO_PROMPT + f"""
+    final_prompt = BODY_PHOTO_PROMPT_MOBILE + f"""
 Additional context:
-- Place: put the person in a similar place as the original image
+- Gender: {gender}
+- Style: {style}
+- Place the person in a similar type of environment as the original photo.
+- Keep lighting, perspective, and camera angle natural and realistic.
 """
 
     try:
