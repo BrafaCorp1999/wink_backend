@@ -105,35 +105,32 @@ Use the FIRST image as the SAME person reference.
 IDENTITY & BODY LOCK (STRICT):
 - Preserve face, hairstyle, skin tone, natural imperfections, freckles, and any unique marks.
 - Do NOT change body size, posture, or volume.
-- Keep all proportions exactly as in the original image.
 - Do NOT smooth, whiten, or alter facial or skin features.
+- Keep all proportions exactly as in the original image.
 
 CLOTHING REPLACEMENT ONLY:
 - Replace ONLY the following clothing items:
 {items_text}
-- DO NOT alter any other clothing not listed above.
+- Use the uploaded image exactly as provided for each clothing item.
+- Do NOT alter any other clothing not listed above.
 - Fit clothes naturally over the existing body.
 - Respect natural folds, gravity, and fabric behavior.
-- Use ONLY the uploaded clothing images exactly as provided.
-- Do NOT invent colors, textures, or accessories for other clothing.
 
 STYLE TARGET:
 - {style}
 - Clean, realistic fashion photography.
 
 SCENE & LIGHTING:
-- Neutral background
-- Soft natural lighting
-- No strong shadows
-- No transparent or fantasy environments
+- Preserve original background and environment (garden, park, plaza, etc.)
+- Soft natural lighting, no strong shadows
 
 POSE & FRAMING:
 - Full body (head to feet) fully visible
-- Neutral standing pose
+- Hair, hands, and feet visible
 - Camera at human eye level
 
 OUTPUT:
-- One ultra realistic final image
+- One ultra-realistic final image
 - No illustration, no CGI, no 3D, no painting
 """
 
