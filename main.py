@@ -27,7 +27,7 @@ app.add_middleware(
 )
 
 # =========================
-# Routers – BODY / AI STYLIST (ya existentes)
+# Routers – BODY / AI STYLIST
 # =========================
 from routers.analyze_body_with_face import router as analyze_router
 from routers.generate_outfits_from_body_photo import router as body_photo_router
@@ -39,7 +39,7 @@ from routers.generate_outfits_from_body_photo_web import router as body_photo_we
 from routers.image_to_image_web import router as image_to_image_web_router
 
 # =========================
-# Routers – CLOTHING ANALYSIS & TRY-ON (NUEVOS)
+# Routers – CLOTHING ANALYSIS & TRY-ON (DEMO)
 # =========================
 from routers.analyze_clothes import router as analyze_clothes_router
 from routers.analyze_clothes_web import router as analyze_clothes_web_router
