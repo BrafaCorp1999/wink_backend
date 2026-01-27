@@ -43,8 +43,8 @@ from routers.image_to_image_web import router as image_to_image_web_router
 # =========================
 from routers.analyze_clothes import router as analyze_clothes_router
 from routers.analyze_clothes_web import router as analyze_clothes_web_router
-from routers.generate_tryon import router as generate_tryon_router
-from routers.generate_tryon_web import router as generate_tryon_web_router
+from routers.generate_try_on import router as generate_tryon_router
+from routers.generate_try_on_web import router as generate_tryon_web_router
 
 # =========================
 # Register routers
