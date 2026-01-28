@@ -12,35 +12,47 @@ router = APIRouter()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 logging.basicConfig(level=logging.INFO)
 
-
 # =========================
 # Helpers
 # =========================
-def image_to_png(upload: UploadFile) -> BytesIO:
-    img = Image.open(upload.file).convert("RGB")
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return buf
+def upload_to_png(upload: UploadFile, size: int = 1024) -> BytesIO:
+    image = Image.open(upload.file).convert("RGB")
+    image = image.resize((size, size))
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer
 
 
-def combine_clothes_prompt(descriptions):
+def combine_clothes_prompt(descriptions: list[str]) -> str:
+    garments_text = "\n".join(f"- {d}" for d in descriptions)
+
     return f"""
-Combine the following clothing items into a single full-body outfit, realistic photo:
+VIRTUAL TRY-ON TASK.
 
-{descriptions}
+BASE IMAGE (STRICT — DO NOT VIOLATE):
+- Do NOT change face, facial features, expression, or identity.
+- Do NOT change body shape, proportions, height, weight, or measurements.
+- Do NOT change skin tone.
+- Same person, same anatomy.
+- Background/place: Change a little the background/enivronment of the original image attached, due to make the photography more reaslistic and fashionable.
+
+GARMENTS TO APPLY:
+{garments_text}
 
 STRICT RULES:
-- Same person, same face and body, do not clarify the face, mantain face details and tone skin.
-- Keep pose, lighting, and background unchanged.
+- Replace ONLY the garments listed above.
+- Preserve EXACT colors, tones, patterns, and garment types.
+- Do NOT invent, recolor, or remove garments.
+- If ONE garment is provided, apply ONLY that garment.
+- If TWO garments are provided, BOTH must be visible.
+- Natural fit according to body proportions.
 - Full body visible from head to toes.
-- Realistic fashion photo.
-- Apply garments exactly as described.
+- Photorealistic fashion photo.
 """
 
-
 # =========================
-# Endpoint MOBILE
+# Endpoint MOBILE FINAL
 # =========================
 @router.post("/ai/combine-clothes")
 async def combine_clothes(
@@ -54,16 +66,27 @@ async def combine_clothes(
     logging.info(f"[COMBINE-CLOTHES-MOBILE] {request_id}")
 
     try:
-        categories_list = json.loads(clothes_categories)
+        categories = json.loads(clothes_categories)
 
-        if len(clothes_files) != len(categories_list):
-            raise HTTPException(status_code=400, detail="Mismatch images vs categories")
+        if not clothes_files or len(clothes_files) == 0:
+            raise HTTPException(status_code=400, detail="No clothing images provided")
 
-        descriptions = []
+        if len(clothes_files) > 2:
+            raise HTTPException(status_code=400, detail="Maximum 2 garments allowed")
 
-        for cat, cloth in zip(categories_list, clothes_files):
-            img_b64 = base64.b64encode(image_to_png(cloth).read()).decode("utf-8")
+        if len(clothes_files) != len(categories):
+            raise HTTPException(status_code=400, detail="Mismatch clothes vs categories")
+
+        descriptions: list[str] = []
+
+        # =========================
+        # 1️⃣ ANALYZE GARMENTS
+        # =========================
+        for idx, (cat, cloth) in enumerate(zip(categories, clothes_files)):
             try:
+                png_buf = upload_to_png(cloth)
+                img_b64 = base64.b64encode(png_buf.read()).decode("utf-8")
+
                 response = client.responses.create(
                     model="gpt-4.1-mini",
                     input=[{
@@ -72,56 +95,59 @@ async def combine_clothes(
                             {
                                 "type": "input_text",
                                 "text": (
-                                    f"Analyze this clothing item for virtual try-on.\n"
+                                    "Analyze this clothing item for virtual try-on.\n"
                                     f"Category: {cat}\n"
-                                    "Describe ONLY visual characteristics: type, color, fit, length, sleeve/neckline, texture/pattern.\n"
-                                    "STRICTLY DO NOT mention brand, model, or change face/body/height/proportions.\n"
-                                    "Focus on color and style details, e.g., skinny, oversize, pattern, texture, length."
+                                    "Describe ONLY visual characteristics.\n"
+                                    "MANDATORY: include garment type and EXACT main color.\n"
+                                    "Include fit/model, length, sleeves, neckline, texture or pattern.\n"
+                                    "Do NOT invent colors.\n"
+                                    "Do NOT mention brand, price, person or background."
                                 )
                             },
-                            {"type": "input_image", "image_base64": img_b64}
+                            {
+                                "type": "input_image",
+                                "image_url": f"data:image/png;base64,{img_b64}"
+                            }
                         ]
                     }]
                 )
-                descriptions.append(f"{cat}: {response.output_text.strip()}")
+
+                desc = response.output_text.strip()
+                if not desc:
+                    raise ValueError("Empty description returned")
+
+                descriptions.append(desc)
+                logging.info(f"[MOBILE][OK] Garment {idx + 1}: {desc}")
+
             except Exception as e:
-                logging.warning(f"[MOBILE] Responses API failed for one item: {e}")
-                descriptions.append(f"{cat}: descripción simulada")  # fallback demo
+                logging.error(f"[MOBILE][ANALYSIS FAILED] Garment {idx + 1}: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to analyze one clothing item"
+                )
 
-        # Validación vestido + zapatos
-        if "vestidos" in categories_list and len(categories_list) > 2:
-            raise HTTPException(status_code=400, detail="Solo puedes combinar vestido + zapatos como máximo 2 prendas")
-
-        combined_prompt = f"""
-STRICT INSTRUCTIONS:
-- DO NOT CHANGE FACE, BODY, HEIGHT, or PROPORTIONS.
-- Keep pose, lighting, and try to change a little the background of the original image.
-- Full body visible from head to toes.
-
-Apply the following clothing changes exactly over the base image:
-
-{chr(10).join(descriptions)}
-
-Combine garments realistically into a full-body outfit, keeping person unchanged.
-"""
-
-        base_img = image_to_png(base_image_file)
+        # =========================
+        # 2️⃣ GENERATE FINAL IMAGE
+        # =========================
+        base_img = upload_to_png(base_image_file)
+        final_prompt = combine_clothes_prompt(descriptions)
 
         result = client.images.edit(
             model="gpt-image-1-mini",
             image=("base.png", base_img.read(), "image/png"),
-            prompt=combined_prompt,
+            prompt=final_prompt,
             size="1024x1024"
         )
 
         return {
             "status": "ok",
             "request_id": request_id,
-            "description": "\n".join(descriptions),
+            "descriptions": descriptions,  # 👈 útil para debug si lo necesitas
             "image": result.data[0].b64_json
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"[COMBINE-CLOTHES-MOBILE][ERROR] {e}")
-        raise HTTPException(status_code=500, detail="Combine clothes generation failed")
-
+        raise HTTPException(status_code=500, detail="Combine clothes failed")
