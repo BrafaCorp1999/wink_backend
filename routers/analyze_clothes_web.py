@@ -34,8 +34,8 @@ Combine the following clothing items into a single full-body outfit, realistic p
 {descriptions}
 
 Rules:
-- Same person, same face and body.
-- Keep pose, lighting, and background unchanged.
+- Same person, same face and body, do not clarify, mantain face details and tone skin.
+- Keep pose, lighting, and background change a little.
 - Full body visible from head to toes.
 - Realistic fashion photo.
 - Apply garments exactly as described.
@@ -57,11 +57,15 @@ async def combine_clothes_web(
     logging.info(f"[COMBINE-CLOTHES-WEB] {request_id}")
 
     try:
-        # Analizar cada prenda
         clothes_list = json.loads(clothes_images_b64)
+        categories_list = json.loads(clothes_categories)
+
+        if len(clothes_list) != len(categories_list):
+            raise HTTPException(status_code=400, detail="Mismatch images vs categories")
+
         descriptions = []
 
-        for img_b64 in clothes_list:
+        for cat, img_b64 in zip(categories_list, clothes_list):
             try:
                 response = client.responses.create(
                     model="gpt-4.1-mini",
@@ -71,26 +75,42 @@ async def combine_clothes_web(
                             {
                                 "type": "input_text",
                                 "text": (
-                                    "Analyze this clothing item for virtual try-on.\n"
-                                    "Describe ONLY visual characteristics: type, colors, fit, length, sleeve/neckline, texture/pattern.\n"
-                                    "Do not mention brand or model."
+                                    f"Analyze this clothing item for virtual try-on.\n"
+                                    f"Category: {cat}\n"
+                                    "Describe ONLY visual characteristics: type, color, fit, length, sleeve/neckline, texture/pattern.\n"
+                                    "STRICTLY DO NOT mention brand, model, or change face/body/height/proportions.\n"
+                                    "Focus on color and style details, e.g., skinny, oversize, pattern, texture, length."
                                 )
                             },
                             {"type": "input_image", "image_base64": img_b64}
                         ]
                     }]
                 )
-                descriptions.append(response.output_text.strip())
+                descriptions.append(f"{cat}: {response.output_text.strip()}")
             except Exception as e:
                 logging.warning(f"[WEB] Responses API failed for one item: {e}")
-                descriptions.append("Descripción simulada de la prenda")  # fallback demo
+                descriptions.append(f"{cat}: descripción simulada")  # fallback demo
 
-        combined_prompt = combine_clothes_prompt("\n".join(descriptions))
+        # Validación: si es vestido + zapatos no pasar de 2
+        if "vestidos" in categories_list and len(categories_list) > 2:
+            raise HTTPException(status_code=400, detail="Solo puedes combinar vestido + zapatos como máximo 2 prendas")
 
-        # Preparar imagen base
+        # Prompt final
+        combined_prompt = f"""
+STRICT INSTRUCTIONS:
+- DO NOT CHANGE FACE, BODY, HEIGHT, or PROPORTIONS.
+- Keep pose, lighting, and try to change a little the background.
+- Full body visible from head to toes.
+
+Apply the following clothing changes exactly over the base image:
+
+{chr(10).join(descriptions)}
+
+Combine garments realistically into a full-body outfit, keeping person unchanged.
+"""
+
         base_img = prepare_image_from_b64(base_image_b64)
 
-        # Generar imagen final
         result = client.images.edit(
             model="gpt-image-1-mini",
             image=("base.png", base_img.read(), "image/png"),
@@ -108,3 +128,4 @@ async def combine_clothes_web(
     except Exception as e:
         logging.error(f"[COMBINE-CLOTHES-WEB][ERROR] {e}")
         raise HTTPException(status_code=500, detail="Combine clothes generation failed")
+
