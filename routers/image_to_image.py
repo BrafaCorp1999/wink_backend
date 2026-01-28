@@ -50,12 +50,12 @@ User profile:
 Describe ONE complete outfit in a concise, fashion-oriented way.
 """
 
-        text_result = client.responses.create(
+        text_result = client.completions.create(
             model="gpt-4.1-mini",
-            input=text_prompt
+            prompt=text_prompt,
+            max_tokens=150
         )
-
-        recommendation = text_result.output_text.strip()
+        recommendation = text_result.choices[0].text.strip()
 
         # 2️⃣ IMAGEN BASADA EN EL TEXTO
         image_prompt = f"""
