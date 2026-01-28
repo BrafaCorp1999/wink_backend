@@ -1,8 +1,5 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, Form, HTTPException
 from openai import OpenAI
-from io import BytesIO
-from PIL import Image
-import base64
 import os
 import uuid
 import logging
@@ -12,25 +9,16 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 logging.basicConfig(level=logging.INFO)
 
 # =========================
-# Helper
+# Endpoint WEB
 # =========================
-def image_to_base64(upload: UploadFile) -> str:
-    image = Image.open(upload.file).convert("RGB")
-    buffer = BytesIO()
-    image.save(buffer, format="PNG")
-    return base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-# =========================
-# Endpoint MOBILE
-# =========================
-@router.post("/ai/combine-clothes")
-async def analyze_clothes(file: UploadFile = File(...)):
+@router.post("/ai/analyze-clothes-web")
+async def analyze_clothes_web(
+    image_b64: str = Form(...)
+):
     request_id = str(uuid.uuid4())
-    logging.info(f"[ANALYZE-CLOTHES-MOBILE] {request_id}")
+    logging.info(f"[ANALYZE-CLOTHES-WEB] {request_id}")
 
     try:
-        img_b64 = image_to_base64(file)
-
         response = client.responses.create(
             model="gpt-4.1-mini",
             input=[{
@@ -45,32 +33,29 @@ async def analyze_clothes(file: UploadFile = File(...)):
                             "Include:\n"
                             "- garment type\n"
                             "- dominant and secondary colors\n"
-                            "- fabric appearance (cotton, denim, knit, satin, leather-like, etc.)\n"
-                            "- fit (tight, fitted, relaxed, oversized)\n"
+                            "- fabric appearance\n"
+                            "- fit\n"
                             "- length and cut\n"
                             "- sleeve type or neckline if applicable\n"
                             "- pattern or texture if present\n\n"
-                            "Do NOT mention brand names.\n"
-                            "Do NOT mention any person or mannequin.\n"
+                            "Do NOT mention brand names or people.\n"
                             "Keep it concise but visually precise."
                         )
                     },
                     {
                         "type": "input_image",
-                        "image_base64": img_b64
+                        "image_base64": image_b64
                     }
                 ]
             }]
         )
 
-        description = response.output_text.strip()
-
         return {
             "status": "ok",
             "request_id": request_id,
-            "description": description
+            "description": response.output_text.strip()
         }
 
     except Exception as e:
-        logging.error(f"[ANALYZE-CLOTHES-MOBILE][ERROR] {e}")
+        logging.error(f"[ANALYZE-CLOTHES-WEB][ERROR] {e}")
         raise HTTPException(status_code=500, detail="Clothing analysis failed")
