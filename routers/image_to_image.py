@@ -53,7 +53,7 @@ Describe ONE complete outfit in a concise, fashion-oriented way.
         text_result = client.completions.create(
             model="gpt-4.1-mini",
             prompt=text_prompt,
-            max_tokens=150
+            max_tokens=100
         )
         recommendation = text_result.choices[0].text.strip()
 
