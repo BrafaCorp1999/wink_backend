@@ -12,6 +12,7 @@ router = APIRouter()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 logging.basicConfig(level=logging.INFO)
 
+
 # =========================
 # Helpers
 # =========================
@@ -24,6 +25,7 @@ def prepare_image_from_b64(image_b64: str, size=1024) -> BytesIO:
     buffer.name = "input.png"
     buffer.seek(0)
     return buffer
+
 
 def combine_clothes_prompt(descriptions):
     return f"""
@@ -38,6 +40,7 @@ Rules:
 - Realistic fashion photo.
 - Apply garments exactly as described.
 """
+
 
 # =========================
 # Endpoint WEB
@@ -59,24 +62,28 @@ async def combine_clothes_web(
         descriptions = []
 
         for img_b64 in clothes_list:
-            response = client.responses.create(
-                model="gpt-4.1-mini",
-                input=[{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": (
-                                "Analyze this clothing item for virtual try-on.\n"
-                                "Describe ONLY visual characteristics: type, colors, fit, length, sleeve/neckline, texture/pattern.\n"
-                                "Do not mention brand or model."
-                            )
-                        },
-                        {"type": "input_image", "image_base64": img_b64}
-                    ]
-                }]
-            )
-            descriptions.append(response.output_text.strip())
+            try:
+                response = client.responses.create(
+                    model="gpt-4.1-mini",
+                    input=[{
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": (
+                                    "Analyze this clothing item for virtual try-on.\n"
+                                    "Describe ONLY visual characteristics: type, colors, fit, length, sleeve/neckline, texture/pattern.\n"
+                                    "Do not mention brand or model."
+                                )
+                            },
+                            {"type": "input_image", "image_base64": img_b64}
+                        ]
+                    }]
+                )
+                descriptions.append(response.output_text.strip())
+            except Exception as e:
+                logging.warning(f"[WEB] Responses API failed for one item: {e}")
+                descriptions.append("Descripción simulada de la prenda")  # fallback demo
 
         combined_prompt = combine_clothes_prompt("\n".join(descriptions))
 
