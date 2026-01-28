@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 # =========================
 # Helpers
 # =========================
-def prepare_image_from_b64(image_b64: str, size=1024) -> BytesIO:
+def prepare_image_from_b64(image_b64: str, size: int = 1024) -> BytesIO:
     image_bytes = base64.b64decode(image_b64)
     image = Image.open(BytesIO(image_bytes)).convert("RGB")
     image = image.resize((size, size))
@@ -26,25 +26,35 @@ def prepare_image_from_b64(image_b64: str, size=1024) -> BytesIO:
 
 
 def combine_clothes_prompt(descriptions: list[str]) -> str:
+    garments_text = "\n".join(f"- {d}" for d in descriptions)
+
     return f"""
-BASE IMAGE:
-- STRICTLY DO NOT change face, body shape, proportions, height, weight or skin tone.
-- Keep the same person identity.
+VIRTUAL TRY-ON TASK.
+
+BASE IMAGE (STRICT — DO NOT VIOLATE):
+- Do NOT change the face, facial features, expression, or identity.
+- Do NOT change body shape, proportions, height, weight, or measurements.
+- Do NOT change skin tone.
+- Keep the same person, same pose, same anatomy.
+- Bckground/place: change a little the ambient/background of the original image to make the photography more realistic. 
 
 GARMENTS TO APPLY:
-{chr(10).join(f"- {d}" for d in descriptions)}
+{garments_text}
 
 STRICT RULES:
-- Replace ONLY the garments described above.
-- Preserve exact colors, tones and garment types.
-- Do NOT invent, recolor or ignore any garment.
-- If two garments are provided, BOTH must be visible.
+- Replace ONLY the garments listed above.
+- Preserve EXACT colors, tones, patterns, and garment types.
+- Do NOT recolor, invent, remove, or ignore any garment.
+- If only ONE garment is provided, apply ONLY that garment.
+- If TWO garments are provided, BOTH must be clearly visible.
+- Ensure natural fit according to body proportions.
 - Full body visible from head to toes.
-- Realistic fashion photo.
+- Photorealistic fashion photography.
+- Natural lighting and realistic shadows.
 """
 
 # =========================
-# Endpoint WEB FINAL
+# Endpoint WEB + MOBILE
 # =========================
 @router.post("/ai/combine-clothes-web")
 async def combine_clothes_web(
@@ -55,14 +65,21 @@ async def combine_clothes_web(
     clothes_categories: str = Form(...)
 ):
     request_id = str(uuid.uuid4())
-    logging.info(f"[COMBINE-CLOTHES-WEB] {request_id}")
+    logging.info(f"[COMBINE-CLOTHES] {request_id}")
 
     try:
         clothes_list = json.loads(clothes_images_b64)
+
+        if not isinstance(clothes_list, list) or len(clothes_list) == 0:
+            raise HTTPException(status_code=400, detail="No clothing images provided")
+
+        if len(clothes_list) > 2:
+            raise HTTPException(status_code=400, detail="Maximum 2 garments allowed")
+
         descriptions: list[str] = []
 
         # =========================
-        # 1️⃣ ANALIZAR PRENDAS (OBLIGATORIO)
+        # 1️⃣ ANALYZE EACH GARMENT
         # =========================
         for idx, img_b64 in enumerate(clothes_list):
             try:
@@ -77,14 +94,13 @@ async def combine_clothes_web(
                                     "Analyze this clothing item for virtual try-on.\n"
                                     "Describe ONLY visual characteristics.\n"
                                     "MANDATORY: include garment type and EXACT main color.\n"
-                                    "Include fit/model, length, sleeves, texture.\n"
+                                    "Include fit/model, length, sleeves, neckline, texture or pattern.\n"
                                     "Do NOT invent colors.\n"
-                                    "Do NOT mention brand, price, or person."
+                                    "Do NOT mention brand, price, person, or background."
                                 )
                             },
                             {
                                 "type": "input_image",
-                                # ✅ CORRECTO: STRING DIRECTO
                                 "image_url": f"data:image/png;base64,{img_b64}"
                             }
                         ]
@@ -97,47 +113,37 @@ async def combine_clothes_web(
                     raise ValueError("Empty description returned")
 
                 descriptions.append(desc)
-                logging.info(f"[WEB][OK] Prenda {idx+1}: {desc}")
+                logging.info(f"[ANALYSIS][OK] Garment {idx + 1}: {desc}")
 
             except Exception as e:
-                logging.error(f"[WEB][ANALYSIS FAILED] Prenda {idx+1}: {e}")
+                logging.error(f"[ANALYSIS][FAILED] Garment {idx + 1}: {e}")
                 raise HTTPException(
                     status_code=500,
                     detail="Failed to analyze one clothing item"
                 )
 
-        # 🔴 VALIDACIÓN CRÍTICA PARA TU DEMO
-        if len(descriptions) != 2:
-            logging.error(f"[WEB] Expected 2 descriptions, got {len(descriptions)}")
-            raise HTTPException(
-                status_code=500,
-                detail="Did not receive 2 clothing descriptions"
-            )
-
         # =========================
-        # 2️⃣ GENERAR IMAGEN (YA SEGURO)
+        # 2️⃣ GENERATE FINAL IMAGE
         # =========================
         base_img = prepare_image_from_b64(base_image_b64)
-        combined_prompt = combine_clothes_prompt(descriptions)
+        final_prompt = combine_clothes_prompt(descriptions)
 
         result = client.images.edit(
             model="gpt-image-1-mini",
             image=("base.png", base_img.read(), "image/png"),
-            prompt=combined_prompt,
+            prompt=final_prompt,
             size="1024x1024"
         )
 
         return {
             "status": "ok",
             "request_id": request_id,
-            # 👇 ARRAY PARA DEBUG (Flutter YA LO IMPRIME)
-            "description": descriptions,
+            "descriptions": descriptions,  # 👈 útil para debug (web + mobile)
             "image": result.data[0].b64_json
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"[COMBINE-CLOTHES-WEB][ERROR] {e}")
+        logging.error(f"[COMBINE-CLOTHES][ERROR] {e}")
         raise HTTPException(status_code=500, detail="Combine clothes failed")
-
