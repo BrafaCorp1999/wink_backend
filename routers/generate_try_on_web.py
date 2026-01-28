@@ -35,12 +35,14 @@ Replace the person's clothing with the following outfit description:
 {clothes_description}
 
 Rules:
-- Keep same person, same face, same body.
+- Full body visible from head to toes.
+- Same person, same face, same body.
 - Do not alter facial features or pose.
 - Preserve background and lighting.
-- Full body visible.
-- Realistic fashion photography.
+- Realistic fashion photo.
 - Add natural folds, shadows, and fabric texture.
+- If the outfit includes a dress and shoes, ensure the dress length and shoes are fully visible.
+- Maintain proper proportions for all clothing items.
 """
 
         result = client.images.edit(
