@@ -43,9 +43,8 @@ STRICT RULES:
 - Realistic fashion photo.
 """
 
-
 # =========================
-# Endpoint WEB
+# Endpoint WEB FINAL
 # =========================
 @router.post("/ai/combine-clothes-web")
 async def combine_clothes_web(
@@ -62,38 +61,43 @@ async def combine_clothes_web(
         clothes_list = json.loads(clothes_images_b64)
         descriptions: list[str] = []
 
+        # =========================
+        # 1️⃣ ANALIZAR PRENDAS (OBLIGATORIO)
+        # =========================
         for idx, img_b64 in enumerate(clothes_list):
             try:
                 response = client.responses.create(
                     model="gpt-4.1-mini",
-                    input=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "input_text",
-                                    "text": (
-                                        "Analyze this clothing item for virtual try-on.\n"
-                                        "Describe ONLY visual characteristics.\n"
-                                        "MANDATORY: include garment type and main color.\n"
-                                        "Include fit/model (e.g. skinny, oversized), length, sleeves, texture.\n"
-                                        "Do NOT mention brand, price or person."
-                                    )
-                                },
-                                {
-                                    "type": "input_image",
-                                    "image_url": {
-                                        "url": f"data:image/png;base64,{img_b64}"
-                                    }
-                                }
-                            ]
-                        }
-                    ],
+                    input=[{
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": (
+                                    "Analyze this clothing item for virtual try-on.\n"
+                                    "Describe ONLY visual characteristics.\n"
+                                    "MANDATORY: include garment type and EXACT main color.\n"
+                                    "Include fit/model, length, sleeves, texture.\n"
+                                    "Do NOT invent colors.\n"
+                                    "Do NOT mention brand, price, or person."
+                                )
+                            },
+                            {
+                                "type": "input_image",
+                                # ✅ CORRECTO: STRING DIRECTO
+                                "image_url": f"data:image/png;base64,{img_b64}"
+                            }
+                        ]
+                    }]
                 )
 
                 desc = response.output_text.strip()
+
+                if not desc:
+                    raise ValueError("Empty description returned")
+
                 descriptions.append(desc)
-                logging.info(f"[WEB][OK] Prenda {idx+1} descripción: {desc}")
+                logging.info(f"[WEB][OK] Prenda {idx+1}: {desc}")
 
             except Exception as e:
                 logging.error(f"[WEB][ANALYSIS FAILED] Prenda {idx+1}: {e}")
@@ -102,8 +106,17 @@ async def combine_clothes_web(
                     detail="Failed to analyze one clothing item"
                 )
 
-        # 🔴 SOLO PARA DEBUG (opcional)
-        # Comenta generación si quieres solo validar descripciones
+        # 🔴 VALIDACIÓN CRÍTICA PARA TU DEMO
+        if len(descriptions) != 2:
+            logging.error(f"[WEB] Expected 2 descriptions, got {len(descriptions)}")
+            raise HTTPException(
+                status_code=500,
+                detail="Did not receive 2 clothing descriptions"
+            )
+
+        # =========================
+        # 2️⃣ GENERAR IMAGEN (YA SEGURO)
+        # =========================
         base_img = prepare_image_from_b64(base_image_b64)
         combined_prompt = combine_clothes_prompt(descriptions)
 
@@ -117,7 +130,8 @@ async def combine_clothes_web(
         return {
             "status": "ok",
             "request_id": request_id,
-            "description": descriptions,  # 👈 ahora ES ARRAY (mejor debug)
+            # 👇 ARRAY PARA DEBUG (Flutter YA LO IMPRIME)
+            "description": descriptions,
             "image": result.data[0].b64_json
         }
 
@@ -126,3 +140,4 @@ async def combine_clothes_web(
     except Exception as e:
         logging.error(f"[COMBINE-CLOTHES-WEB][ERROR] {e}")
         raise HTTPException(status_code=500, detail="Combine clothes failed")
+
