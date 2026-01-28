@@ -58,14 +58,9 @@ async def combine_clothes_web(
 
     try:
         clothes_list = json.loads(clothes_images_b64)
-        categories_list = json.loads(clothes_categories)
-
-        if len(clothes_list) != len(categories_list):
-            raise HTTPException(status_code=400, detail="Mismatch images vs categories")
-
         descriptions = []
 
-        for cat, img_b64 in zip(categories_list, clothes_list):
+        for idx, img_b64 in enumerate(clothes_list):
             try:
                 response = client.responses.create(
                     model="gpt-4.1-mini",
@@ -75,39 +70,26 @@ async def combine_clothes_web(
                             {
                                 "type": "input_text",
                                 "text": (
-                                    f"Analyze this clothing item for virtual try-on.\n"
-                                    f"Category: {cat}\n"
-                                    "Describe ONLY visual characteristics: type, color, fit, length, sleeve/neckline, texture/pattern.\n"
-                                    "STRICTLY DO NOT mention brand, model, or change face/body/height/proportions.\n"
-                                    "Focus on color and style details, e.g., skinny, oversize, pattern, texture, length."
+                                    "Analyze this clothing item for virtual try-on.\n"
+                                    "Describe ONLY visual characteristics: type, colors, fit, length, sleeve/neckline, texture/pattern.\n"
+                                    "Do not mention brand or model."
                                 )
                             },
                             {"type": "input_image", "image_base64": img_b64}
                         ]
                     }]
                 )
-                descriptions.append(f"{cat}: {response.output_text.strip()}")
+                desc = response.output_text.strip()
+                descriptions.append(desc)
+
+                # 🔹 DEBUG: imprimir cada descripción en backend
+                logging.info(f"[WEB][DEBUG] Prenda {idx+1}: {desc}")
+
             except Exception as e:
                 logging.warning(f"[WEB] Responses API failed for one item: {e}")
-                descriptions.append(f"{cat}: descripción simulada")  # fallback demo
+                descriptions.append(f"Descripción simulada de la prenda {idx+1}")  # fallback demo
 
-        # Validación: si es vestido + zapatos no pasar de 2
-        if "vestidos" in categories_list and len(categories_list) > 2:
-            raise HTTPException(status_code=400, detail="Solo puedes combinar vestido + zapatos como máximo 2 prendas")
-
-        # Prompt final
-        combined_prompt = f"""
-STRICT INSTRUCTIONS:
-- DO NOT CHANGE FACE, BODY, HEIGHT, or PROPORTIONS.
-- Keep pose, lighting, and try to change a little the background.
-- Full body visible from head to toes.
-
-Apply the following clothing changes exactly over the base image:
-
-{chr(10).join(descriptions)}
-
-Combine garments realistically into a full-body outfit, keeping person unchanged.
-"""
+        combined_prompt = combine_clothes_prompt("\n".join(descriptions))
 
         base_img = prepare_image_from_b64(base_image_b64)
 
@@ -121,11 +103,12 @@ Combine garments realistically into a full-body outfit, keeping person unchanged
         return {
             "status": "ok",
             "request_id": request_id,
-            "description": "\n".join(descriptions),
+            "description": "\n".join(descriptions),  # 🔹 Aquí deberías ver las 2 descripciones
             "image": result.data[0].b64_json
         }
 
     except Exception as e:
         logging.error(f"[COMBINE-CLOTHES-WEB][ERROR] {e}")
         raise HTTPException(status_code=500, detail="Combine clothes generation failed")
+
 
