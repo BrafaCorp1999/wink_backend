@@ -4,6 +4,7 @@ from io import BytesIO
 from PIL import Image
 import base64
 import os
+import json
 
 router = APIRouter()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -14,7 +15,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 def prepare_image_from_b64(image_b64: str, size=1024) -> BytesIO:
     image_bytes = base64.b64decode(image_b64)
     image = Image.open(BytesIO(image_bytes)).convert("RGB")
-    image = image.resize((size, size))
+    image.thumbnail((size, size))  # Mantener proporciones
 
     buffer = BytesIO()
     image.save(buffer, format="PNG")
@@ -22,7 +23,9 @@ def prepare_image_from_b64(image_b64: str, size=1024) -> BytesIO:
     buffer.seek(0)
     return buffer
 
-
+# =========================
+# Endpoint Web
+# =========================
 @router.post("/ai/generate-outfit-from-form-web")
 async def generate_outfit_from_form_web(
     gender: str = Form(...),
@@ -34,41 +37,54 @@ async def generate_outfit_from_form_web(
     base_image_b64: str = Form(...)
 ):
     try:
+        # Imagen del usuario
         image_file = prepare_image_from_b64(base_image_b64)
 
-        # 1️⃣ TEXTO PRIMERO
+        # 1️⃣ Texto - Outfit en español + lista de prendas
         text_prompt = f"""
-You are a professional fashion stylist.
+Eres un estilista profesional.
 
-User profile:
-- Gender: {gender}
-- Style: {style}
-- Occasion: {occasion}
-- Climate: {climate}
-- Preferred colors: {colors}
+Perfil del usuario:
+- Género: {gender}
+- Estilo: {style}
+- Ocasión: {occasion}
+- Clima: {climate}
+- Colores preferidos: {colors}
 
-Describe ONE complete outfit in a concise, fashion-oriented way.
+Describe UN outfit completo en español de manera concisa (2-3 líneas).
+Devuelve además un JSON con las prendas mencionadas, ejemplo:
+{{"prendas": ["vestido", "zapatos", "bolso"]}}
 """
 
         text_result = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
-                {"role": "system", "content": "You are a professional fashion stylist."},
+                {"role": "system", "content": "Eres un estilista profesional. Responde en español."},
                 {"role": "user", "content": text_prompt}
-           ],
-           max_tokens=100
+            ],
+            max_tokens=120
         )
-        recommendation = text_result.choices[0].message.content.strip()
 
+        raw_text = text_result.choices[0].message.content.strip()
 
-        # 2️⃣ IMAGEN
+        # Extraer recommendation y prendas_detectadas
+        try:
+            parts = raw_text.rsplit("```json", 1)
+            recommendation = parts[0].strip()
+            prendas_detectadas = json.loads(parts[1].strip().strip("```"))
+        except:
+            recommendation = raw_text
+            prendas_detectadas = {"prendas": []}
+
+        # 2️⃣ Imagen - aplicar outfit
         image_prompt = f"""
-Apply the following outfit to the person in the image:
+Aplica el siguiente outfit a la persona en la imagen:
 
 {recommendation}
 
-Preserve face, body, pose and proportions.
-High-quality fashion editorial style.
+Preserva estrictamente el rostro, las proporciones del cuerpo, la altura, peso y la pose original del usuario.
+Solo cambia el outfit y el entorno según la ocasión, estilo y clima especificados.
+Alta calidad, estilo editorial de moda.
 """
 
         image_result = client.images.edit(
@@ -83,7 +99,8 @@ High-quality fashion editorial style.
         return {
             "status": "ok",
             "image": generated_image,
-            "recommendation": recommendation
+            "recommendation": recommendation,
+            "prendas_detectadas": prendas_detectadas.get("prendas", [])
         }
 
     except Exception as e:
