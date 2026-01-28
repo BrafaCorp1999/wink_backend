@@ -31,7 +31,7 @@ Combine the following clothing items into a single full-body outfit, realistic p
 {descriptions}
 
 STRICT RULES:
-- Same person, same face and body.
+- Same person, same face and body, do not clarify the face, mantain face details and tone skin.
 - Keep pose, lighting, and background unchanged.
 - Full body visible from head to toes.
 - Realistic fashion photo.
