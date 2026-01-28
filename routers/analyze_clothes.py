@@ -54,8 +54,14 @@ async def combine_clothes(
     logging.info(f"[COMBINE-CLOTHES-MOBILE] {request_id}")
 
     try:
+        categories_list = json.loads(clothes_categories)
+
+        if len(clothes_files) != len(categories_list):
+            raise HTTPException(status_code=400, detail="Mismatch images vs categories")
+
         descriptions = []
-        for cloth in clothes_files:
+
+        for cat, cloth in zip(categories_list, clothes_files):
             img_b64 = base64.b64encode(image_to_png(cloth).read()).decode("utf-8")
             try:
                 response = client.responses.create(
@@ -66,26 +72,41 @@ async def combine_clothes(
                             {
                                 "type": "input_text",
                                 "text": (
-                                    "Analyze this clothing item for virtual try-on.\n"
-                                    "Describe ONLY visual characteristics: type, colors, fit, length, sleeve/neckline, texture/pattern.\n"
-                                    "Do not mention brand or model."
+                                    f"Analyze this clothing item for virtual try-on.\n"
+                                    f"Category: {cat}\n"
+                                    "Describe ONLY visual characteristics: type, color, fit, length, sleeve/neckline, texture/pattern.\n"
+                                    "STRICTLY DO NOT mention brand, model, or change face/body/height/proportions.\n"
+                                    "Focus on color and style details, e.g., skinny, oversize, pattern, texture, length."
                                 )
                             },
                             {"type": "input_image", "image_base64": img_b64}
                         ]
                     }]
                 )
-                descriptions.append(response.output_text.strip())
+                descriptions.append(f"{cat}: {response.output_text.strip()}")
             except Exception as e:
                 logging.warning(f"[MOBILE] Responses API failed for one item: {e}")
-                descriptions.append("Descripción simulada de la prenda")  # fallback demo
+                descriptions.append(f"{cat}: descripción simulada")  # fallback demo
 
-        combined_prompt = combine_clothes_prompt("\n".join(descriptions))
+        # Validación vestido + zapatos
+        if "vestidos" in categories_list and len(categories_list) > 2:
+            raise HTTPException(status_code=400, detail="Solo puedes combinar vestido + zapatos como máximo 2 prendas")
 
-        # Preparar imagen base
+        combined_prompt = f"""
+STRICT INSTRUCTIONS:
+- DO NOT CHANGE FACE, BODY, HEIGHT, or PROPORTIONS.
+- Keep pose, lighting, and try to change a little the background of the original image.
+- Full body visible from head to toes.
+
+Apply the following clothing changes exactly over the base image:
+
+{chr(10).join(descriptions)}
+
+Combine garments realistically into a full-body outfit, keeping person unchanged.
+"""
+
         base_img = image_to_png(base_image_file)
 
-        # Generar imagen final
         result = client.images.edit(
             model="gpt-image-1-mini",
             image=("base.png", base_img.read(), "image/png"),
@@ -103,3 +124,4 @@ async def combine_clothes(
     except Exception as e:
         logging.error(f"[COMBINE-CLOTHES-MOBILE][ERROR] {e}")
         raise HTTPException(status_code=500, detail="Combine clothes generation failed")
+
