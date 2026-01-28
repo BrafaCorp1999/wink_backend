@@ -2,10 +2,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from openai import OpenAI
 from io import BytesIO
 from PIL import Image
-import base64
-import os
-import uuid
-import logging
+import os, uuid, logging
 
 router = APIRouter()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -34,12 +31,13 @@ Replace the person's clothing with the following outfit:
 
 {clothes_description}
 
-STRICT RULES:
-- Same person, same face, same body.
-- Do NOT alter facial features.
-- Keep pose, lighting, background.
-- Realistic fashion photo.
+Rules:
+- Keep same person, same face, same body.
+- Do not alter facial features or pose.
+- Preserve background and lighting.
 - Full body visible.
+- Realistic fashion photography.
+- Add natural folds, shadows, and fabric texture.
 """
 
         result = client.images.edit(
@@ -55,5 +53,6 @@ STRICT RULES:
             "image": result.data[0].b64_json
         }
 
-    except Exception:
+    except Exception as e:
+        logging.error(e)
         raise HTTPException(status_code=500, detail="Try-on generation failed")
