@@ -1,68 +1,53 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from openai import OpenAI
 from io import BytesIO
 from PIL import Image
 import base64
 import os
+import json
 
 router = APIRouter()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # =========================
-# Request schema
+# Helpers
 # =========================
-class GenerateOutfitRequest(BaseModel):
-    image_base64: str
-    description: str
-
-# =========================
-# Helper
-# =========================
-def resize_image(image_b64: str, size=1024) -> str:
-    image_bytes = base64.b64decode(image_b64)
-    image = Image.open(BytesIO(image_bytes)).convert("RGB")
-    image.thumbnail((size, size))
+def prepare_image(file: UploadFile, size=1024) -> BytesIO:
+    image = Image.open(file.file).convert("RGB")
+    image = image.resize((size, size))
 
     buffer = BytesIO()
     image.save(buffer, format="PNG")
+    buffer.name = "input.png"
     buffer.seek(0)
+    return buffer
 
-    return base64.b64encode(buffer.read()).decode("utf-8")
 
-# =========================
-# Endpoint MOBILE
-# =========================
 @router.post("/ai/generate-outfit-from-form")
-async def generate_outfit_from_form(data: GenerateOutfitRequest):
+async def generate_outfit_from_form(
+    gender: str = Form(...),
+    body_traits: str = Form(...),
+    style: str = Form(...),
+    occasion: str = Form(...),
+    climate: str = Form(...),
+    colors: str = Form(...),
+    base_image_file: UploadFile = File(...)
+):
     try:
-        base_image = resize_image(data.image_base64)
+        image_file = prepare_image(base_image_file)
 
-        prompt = f"""
-You are a virtual fashion stylist.
-Preserve the person exactly as they are.
-Do NOT change body, face, pose or proportions.
-
-Apply a realistic outfit based on this description:
-{data.description}
-
-Return a natural, fashion-photo style result.
-"""
-
-        # 1️⃣ Generate image
-        image_result = client.images.edit(
-            model="gpt-image-1-mini",
-            image=base_image,
-            prompt=prompt,
-            size="1024x1024"
-        )
-
-        generated_image = image_result.data[0].b64_json
-
-        # 2️⃣ Generate text suggestion
+        # 1️⃣ TEXTO PRIMERO (fuente de verdad)
         text_prompt = f"""
-Describe briefly the outfit applied to the person.
-Be concise, fashion-oriented and friendly.
+You are a professional fashion stylist.
+
+User profile:
+- Gender: {gender}
+- Style: {style}
+- Occasion: {occasion}
+- Climate: {climate}
+- Preferred colors: {colors}
+
+Describe ONE complete outfit in a concise, fashion-oriented way.
 """
 
         text_result = client.responses.create(
@@ -71,6 +56,25 @@ Be concise, fashion-oriented and friendly.
         )
 
         recommendation = text_result.output_text.strip()
+
+        # 2️⃣ IMAGEN BASADA EN EL TEXTO
+        image_prompt = f"""
+Apply the following outfit to the person in the image:
+
+{recommendation}
+
+Preserve face, body, pose and proportions.
+Realistic fashion photography.
+"""
+
+        image_result = client.images.edit(
+            model="gpt-image-1-mini",
+            image=image_file,
+            prompt=image_prompt,
+            size="1024x1024"
+        )
+
+        generated_image = image_result.data[0].b64_json
 
         return {
             "status": "ok",
