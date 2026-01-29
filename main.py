@@ -37,6 +37,7 @@ from routers.image_to_image import router as image_to_image_router
 from routers.analyze_body_web import router as analyze_web_router
 from routers.generate_outfits_from_body_photo_web import router as body_photo_web_router
 from routers.image_to_image_web import router as image_to_image_web_router
+from routers.keep_alive import router as keep_alive_router
 
 # =========================
 # Routers – CLOTHING ANALYSIS & TRY-ON (DEMO)
@@ -62,6 +63,7 @@ app.include_router(analyze_clothes_router, prefix="/api")
 app.include_router(analyze_clothes_web_router, prefix="/api")
 app.include_router(generate_tryon_router, prefix="/api")
 app.include_router(generate_tryon_web_router, prefix="/api")
+app.include_router(keep_alive_router, prefix="/api")
 
 # =========================
 # Root / Health
