@@ -82,7 +82,7 @@ Aplica el siguiente outfit a la persona en la imagen:
 
 {recommendation}
 
-Preserva estrictamente el rostro, las proporciones del cuerpo, la altura, peso y la pose original del usuario.
+Preserva estrictamente el rostro, las proporciones del cuerpo, la altura, peso y la pose original del usuario, mantén el rostro tal cual, NO mejorar el aspecto ya sea blanqueando, aclareciendo piel, arrugas y demás aspectos del rostro.
 Solo cambia el outfit y el entorno según la ocasión, estilo y clima especificados.
 Alta calidad, estilo editorial de moda.
 """
