@@ -16,11 +16,22 @@ logging.basicConfig(level=logging.INFO)
 # Helpers
 # =========================
 def upload_to_png(upload: UploadFile, size: int = 1024) -> BytesIO:
+    """
+    Convierte cualquier imagen subida a PNG, manteniendo proporciones,
+    y la redimensiona a un máximo de 'size' x 'size'.
+    Devuelve un BytesIO listo para enviarse a la IA.
+    """
+    # Abrir imagen y convertir a RGB
     image = Image.open(upload.file).convert("RGB")
-    image = image.resize((size, size))
+    
+    # Mantener proporciones usando thumbnail
+    image.thumbnail((size, size))
+    
+    # Guardar en buffer PNG
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     buffer.seek(0)
+    
     return buffer
 
 
