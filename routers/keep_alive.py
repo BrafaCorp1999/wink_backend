@@ -1,7 +1,8 @@
-from fastapi import FastAPI
+# keep_alive.py
+from fastapi import APIRouter
 
-app = FastAPI()
+router = APIRouter()
 
-@app.get("/ping")
+@router.get("/ping")
 async def ping():
     return {"status": "ok"}
