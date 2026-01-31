@@ -19,6 +19,7 @@ app.add_middleware(
         "http://localhost:8000",
         "http://127.0.0.1",
         "https://wink-e51d9.web.app",
+        "https://wink-c5eab.web.app",
     ],
     allow_origin_regex=r"http://localhost:\d+",
     allow_credentials=True,
