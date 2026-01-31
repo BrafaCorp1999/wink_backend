@@ -4,6 +4,7 @@ from io import BytesIO
 import json
 import os
 from PIL import Image
+from typing import Optional
 
 router = APIRouter()
 
@@ -94,7 +95,7 @@ async def ensure_png_upload(upload: UploadFile) -> BytesIO:
 # =========================
 @router.post("/generate-outfits/selfie")
 async def generate_outfits_from_selfie(
-    user_id: str = Form(...),
+    user_id: Optional[str] = Form(None),
     gender: str = Form(...),
     body_traits: str = Form(...),
     style: str = Form("modern"),
